@@ -10,8 +10,18 @@ Should work with media players detectable by `playerctl`.
 
 ## Requirements
 
-- ncurses
-- playerctl
-- imagemagick
-- ffmpeg
-- jp2a
+### Core Dependencies
+
+- ncurses (TUI)
+- playerctl (Get media playing status)
+- ffmpeg (Extract image thumbnail from audio file)
+- imagemagick (Convert to WEBP, used so jp2a handles image scaling better)
+- jp2a (JPG/WEBP to ASCII)
+
+### Dev Dependencies
+
+- fswatch (fs watcher)
+
+## License
+
+MIT.

@@ -5,11 +5,13 @@
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
 #include "debug.h"
 
 #define MAX_LYRIC_LINES 3000
-#define BUFFER_SIZE 262144 // Increased for large metadata blocks
+#define BUFFER_SIZE 262144
 #define CMD_BUFFER 16384
+#define RESIZE_DELAY_MS 200
 
 typedef struct {
     char title[512], artist[512], album[512], player[64], art_url[4096], status[32];
@@ -21,6 +23,14 @@ typedef struct {
 Metadata m;
 char last_art_url[4096] = {0};
 int scroll_pos = 0;
+long last_resize_time = 0;
+bool resize_pending = false;
+
+long get_ms() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 
 void cleanup(int sig) {
     (void)sig;
@@ -36,42 +46,72 @@ void clear_metadata_struct() {
     memset(&m, 0, sizeof(Metadata));
 }
 
+char* sh_escape(const char* src) {
+    static char escaped[8192];
+    char *dest = escaped;
+    while (*src && (dest - escaped < 8190)) {
+        if (*src == '\'') {
+            memcpy(dest, "'\\''", 4);
+            dest += 4;
+        } else {
+            *dest++ = *src;
+        }
+        src++;
+    }
+    *dest = '\0';
+    return escaped;
+}
+
 void render_art(int x, int y, int w, int h) {
-    // Determine source: If it's a local file, extract directly. Otherwise, use URL.
-    char *source_path = NULL;
+    if (w <= 0 || h <= 0) return;
+
+    char *source_raw = NULL;
+    int is_file = 0;
+
+    // 1. Direct file check
     if (strlen(m.file_path) > 5) {
-        source_path = (strncmp(m.file_path, "file://", 7) == 0) ? m.file_path + 7 : m.file_path;
-    } else if (strlen(m.art_url) > 5) {
-        source_path = (strncmp(m.art_url, "file://", 7) == 0) ? m.art_url + 7 : m.art_url;
+        char *p = (strncmp(m.file_path, "file://", 7) == 0) ? m.file_path + 7 : m.file_path;
+        if (access(p, F_OK) == 0) { source_raw = p; is_file = 1; }
     }
 
-    if (!source_path || strcmp(source_path, "null") == 0) {
-        mvprintw(y + (h/2), x + (w/2) - 8, "[ No Artwork ]");
-        last_art_url[0] = '\0';
-        return;
+    // 2. Art URL fallback
+    if (!source_raw && strlen(m.art_url) > 5) {
+        char *p = (strncmp(m.art_url, "file://", 7) == 0) ? m.art_url + 7 : m.art_url;
+        if (access(p, F_OK) == 0) { source_raw = p; is_file = 1; }
+        else if (strncmp(m.art_url, "http", 4) == 0) { source_raw = m.art_url; is_file = 0; }
     }
 
     static int last_w = 0, last_h = 0;
-    if (strcmp(source_path, last_art_url) == 0 && w == last_w && h == last_h) return;
+    if (source_raw && strcmp(source_raw, last_art_url) == 0 && w == last_w && h == last_h) return;
 
     char cmd[CMD_BUFFER];
-    /* Optimized Pipeline:
-       1. ffmpeg extracts embedded map 0:v (attached picture) to pipe:1 (stdout)
-       2. magick reads from stdin, crops to square, resizes
-       3. jp2a renders 24-bit ANSI
-    */
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wformat-truncation"
-    snprintf(cmd, sizeof(cmd),
-        "ffmpeg -hide_banner -loglevel error -i \"%s\" -map 0:v -f image2 pipe:1 | "
-        "magick - -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
-        "jp2a -b --width=%d --color-depth=24 - | "
-        "sed 's/^/\\x1b[%dG/'", 
-        source_path, w*2, h*2, w*2, h*2, w, x + 1);
+    if (source_raw) {
+        char *safe_path = sh_escape(source_raw);
+        if (is_file) {
+            snprintf(cmd, sizeof(cmd),
+                "ffmpeg -hide_banner -loglevel error -i '%s' -map 0:v -f image2 pipe:1 2>/dev/null | "
+                "magick - -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
+                "jp2a -b --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'", 
+                safe_path, w*2, h*2, w*2, h*2, w, x + 1);
+        } else {
+            snprintf(cmd, sizeof(cmd),
+                "magick '%s' -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
+                "jp2a -b --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'", 
+                safe_path, w*2, h*2, w*2, h*2, w, x + 1);
+        }
+        strncpy(last_art_url, source_raw, sizeof(last_art_url) - 1);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "magick -size %dx%d canvas:black -fill white -gravity center -pointsize 40 -draw \"text 0,0 '♪'\" webp:- | "
+            "jp2a -b --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'", 
+            w*10, h*10, w, x + 1);
+        last_art_url[0] = '\0';
+    }
     #pragma GCC diagnostic pop
 
-    move(y, x);
-    refresh();
+    move(y, x); refresh();
     printf("\x1b[%d;%dH", y + 1, x + 1);
     
     FILE *fp = popen(cmd, "r");
@@ -79,7 +119,6 @@ void render_art(int x, int y, int w, int h) {
         char line[4096];
         while (fgets(line, sizeof(line), fp)) fwrite(line, 1, strlen(line), stdout);
         pclose(fp);
-        strncpy(last_art_url, source_path, sizeof(last_art_url) - 1);
         last_w = w; last_h = h;
     }
     fflush(stdout);
@@ -95,11 +134,9 @@ void draw_dashboard() {
         attron(A_BOLD | COLOR_PAIR(1));
         mvprintw(max_y/2, (max_x/2) - 8, "YAMS : STANDBY");
         attroff(A_BOLD | COLOR_PAIR(1));
-        refresh();
-        return;
+        refresh(); return;
     }
 
-    // Left Column: Metadata
     attron(A_BOLD | COLOR_PAIR(1));
     mvprintw(1, 2, "[%s] %s", strlen(m.status) ? m.status : "---", m.player);
     mvprintw(2, 2, "%.*s", split - 4, m.title);
@@ -114,7 +151,6 @@ void draw_dashboard() {
     
     mvhline(8, 2, ACS_HLINE, split - 4);
 
-    // Right Column: Lyrics
     attron(COLOR_PAIR(3));
     int lyric_h = max_y - 2;
     for (int i = 0; i < lyric_h && (i + scroll_pos) < m.lyric_count; i++) {
@@ -123,12 +159,14 @@ void draw_dashboard() {
     attroff(COLOR_PAIR(3));
 
     refresh();
-    render_art(2, 9, split - 6, max_y - 11);
+    // Only render art if we aren't currently waiting for a resize to finish
+    if (!resize_pending) {
+        render_art(2, 9, split - 6, max_y - 11);
+    }
 }
 
 void parse_block(char *block) {
-    clear_metadata_struct(); // FORCE REBUILD IN PLACE
-
+    clear_metadata_struct(); 
     char *saveptr;
     char *token = strtok_r(block, "¶", &saveptr);
     while (token) {
@@ -157,11 +195,9 @@ void parse_block(char *block) {
 int main() {
     signal(SIGINT, cleanup);
     initscr(); start_color(); use_default_colors();
-    curs_set(0); noecho(); keypad(stdscr, TRUE); timeout(100);
+    curs_set(0); noecho(); keypad(stdscr, TRUE); timeout(50);
     init_pair(1, COLOR_CYAN, -1); init_pair(2, COLOR_GREEN, -1); init_pair(3, 250, -1);
 
-    // Added PATH|{{mpris:trackid}} - many players put the file path here
-    // Also added xesam:url as a fallback for the path
     const char *fmt = "TITLE|{{title}}¶ARTIST|{{artist}}¶ALBUM|{{album}}¶GENRE|{{xesam:genre}}¶COMP|{{xesam:composer}}¶PATH|{{xesam:url}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶ART|{{mpris:artUrl}}¶LYRICS|{{xesam:asText}}¶[[END]]¶";
     char cmd[2048];
     snprintf(cmd, sizeof(cmd), "playerctl metadata --follow --format '%s'", fmt);
@@ -176,6 +212,24 @@ int main() {
 
     while (1) {
         int ch = getch();
+        
+        if (ch == KEY_RESIZE) {
+            resize_pending = true;
+            last_resize_time = get_ms();
+            // Optional: Draw a "Resizing..." hint or just clear to keep it snappy
+            erase(); refresh();
+        }
+
+        // Check if resize debounce period has passed
+        if (resize_pending && (get_ms() - last_resize_time > RESIZE_DELAY_MS)) {
+            resize_pending = false;
+            int my, mx;
+            getmaxyx(stdscr, my, mx);
+            resizeterm(my, mx);
+            last_art_url[0] = '\0'; // Force art redraw
+            draw_dashboard();
+        }
+
         if (ch == 'j' || ch == KEY_DOWN) { scroll_pos++; draw_dashboard(); }
         if (ch == 'k' || ch == KEY_UP) { if (scroll_pos > 0) scroll_pos--; draw_dashboard(); }
         if (ch == 'q') break;
@@ -188,10 +242,9 @@ int main() {
                 memcpy(full_buffer + total_bytes, temp, n);
                 total_bytes += n;
                 full_buffer[total_bytes] = '\0';
-                
-                // Process only the MOST RECENT full block if multiple arrived
-                char *end_marker = strstr(full_buffer, "[[END]]");
-                if (end_marker) {
+                char *last_end = NULL, *p = full_buffer;
+                while ((p = strstr(p, "[[END]]"))) { last_end = p; p += 7; }
+                if (last_end) {
                     parse_block(full_buffer);
                     draw_dashboard();
                     memset(full_buffer, 0, BUFFER_SIZE);
