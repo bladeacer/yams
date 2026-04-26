@@ -9,12 +9,13 @@
 #include "debug.h"
 
 bool resize_pending = false;
-int scroll_pos = 0; // Keeping for compatibility, but not used for shifting
+int scroll_pos = 0; 
 static int last_scroll_pos = -1;
 
 static WINDOW *main_win = NULL;
 static PANEL  *main_panel = NULL;
 static WINDOW *lyr_sub = NULL;
+static WINDOW *meta_sub = NULL; // New subwin for metadata isolation
 
 void init_ui() {
     initscr();
@@ -37,6 +38,7 @@ static const char* safe_str(const char* s) {
 }
 
 void cleanup_ui(int sig) {
+    (void)sig;
     endwin();
     printf("\033[2J\033[H\033[?25h\033[0m");
     fflush(stdout);
@@ -54,11 +56,12 @@ static void render_art(int x, int y, int w, int h) {
     char *safe_path = sh_escape(decoded_path);
     char cmd[16384];
     
+    // Added -fuzz 10% -trim to discard redundant backgrounds (grey/black bars)
     snprintf(cmd, sizeof(cmd), 
         "(ffmpeg -hide_banner -loglevel error -i \"%s\" -vframes 1 -f mjpeg - 2>/dev/null) | "
-        "magick - -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
+        "magick - -fuzz 10%% -trim -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
         "jp2a -b --width=%d --height=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'", 
-        safe_path, w*2, h*2, w*2, h*2, w - 1, h, x + 1);
+        safe_path, w*2, h*2, w*2, h*2, w, h, x + 1);
 
     def_prog_mode(); 
     printf("\x1b[%d;%dH", y + 1, x + 1);
@@ -85,26 +88,44 @@ void draw_dashboard() {
     bool needs_full_rebuild = (strcmp(current_source, rendered_path_cache) != 0) || 
                                (max_x != last_x || max_y != last_y) || resize_pending;
 
-    // 1. FIXED GEOMETRY (No Edges Touched)
-    const int meta_h = 6;
     int art_x, art_y, art_w, art_h;
     int lx, ly, lw, lh;
+    int mx, my, mw, mh;
     bool horizontal = (max_x > 90);
 
     int safe_h = max_y - 2;
     int safe_w = max_x - 2;
 
     if (!horizontal) {
-        art_w = safe_w - 4; art_x = 2; art_y = meta_h + 1;
-        art_h = (int)(art_w / (get_image_aspect(current_source) * 2.1));
-        if (art_h > (safe_h * 0.4)) art_h = safe_h * 0.4;
-        lx = 2; ly = art_y + art_h + 1; lw = safe_w - 4; lh = safe_h - ly - 1;
+        art_w = safe_w - 6;
+        art_h = (int)(art_w * 0.48); 
+        if (art_h > (safe_h - 12)) art_h = safe_h - 12;
+        if (art_h < 5) art_h = 5;
+
+        art_x = 2; art_y = 0; 
+        
+        // Metadata directly under art
+        my = art_h + 1; mx = 2; mw = safe_w - 4; mh = 5;
+        
+        // Lyrics under metadata
+        ly = my + mh + 1; lx = 2; lw = safe_w - 4; lh = safe_h - ly;
     } else {
-        int split = (int)(safe_w * 0.40);
-        art_x = 2; art_y = meta_h + 1; art_w = split - 4;
-        art_h = (int)(art_w / (get_image_aspect(current_source) * 2.1));
-        lx = split + 2; ly = 1; lw = safe_w - lx - 1; lh = safe_h - 2;
+        int split = (int)(safe_w * 0.60);
+        art_w = split - 6;
+        art_h = (int)(art_w * 0.48); 
+        if (art_h > (safe_h - 8)) art_h = safe_h - 8;
+
+        art_x = 2; art_y = 0;
+
+        // Metadata under art (left column)
+        my = art_h + 1; mx = 2; mw = split - 4; mh = 5;
+
+        // Lyrics in right column
+        lx = split + 2; ly = 0; lw = safe_w - lx - 2; lh = safe_h;
     }
+
+    if (art_w > 1) art_w -= 1;
+    if (art_h > 1) art_h -= 1;
 
     if (needs_full_rebuild) {
         resize_pending = false;
@@ -114,27 +135,33 @@ void draw_dashboard() {
         if (main_panel) del_panel(main_panel);
         if (main_win) delwin(main_win);
         if (lyr_sub) delwin(lyr_sub);
+        if (meta_sub) delwin(meta_sub);
 
         main_win = newwin(safe_h, safe_w, 1, 1);
         main_panel = new_panel(main_win);
+        meta_sub = derwin(main_win, mh, mw, my, mx);
         lyr_sub = derwin(main_win, lh, lw, ly, lx);
-        scrollok(lyr_sub, FALSE);
-
+        
         erase();
         wnoutrefresh(stdscr);
 
-        wattron(main_win, A_BOLD | COLOR_PAIR(1));
-        mvwprintw(main_win, 0, 1, "[%s] %s", safe_str(m.status), safe_str(m.player));
-        wattroff(main_win, A_BOLD);
+        // 1. Metadata isolation subwindow
+        werase(meta_sub);
+        wattron(meta_sub, A_BOLD | COLOR_PAIR(1));
+        mvwprintw(meta_sub, 0, 0, "%s | %s", safe_str(m.status), safe_str(m.player));
+        wattroff(meta_sub, A_BOLD);
 
-        mvwprintw(main_win, 1, 1, "Title: %.*s", art_w, safe_str(m.title));
+        mvwprintw(meta_sub, 1, 0, "Title: %.*s", mw-7, safe_str(m.title));
+        wattron(meta_sub, COLOR_PAIR(2));
+        mvwprintw(meta_sub, 2, 0, "Artist: %.*s", mw-8, safe_str(m.artist));
+        mvwprintw(meta_sub, 3, 0, "Album:  %.*s", mw-8, safe_str(m.album));
+        wattroff(meta_sub, COLOR_PAIR(2));
 
-        wattron(main_win, COLOR_PAIR(2));
-        mvwprintw(main_win, 2, 1, "Artist: %.*s", art_w, safe_str(m.artist));
-        mvwprintw(main_win, 3, 1, "Album: %.*s", art_w, safe_str(m.album));
-        wattroff(main_win, COLOR_PAIR(2));
+        // 2. Exit Indicator
+        const char* help = "Q: Quit";
+        mvwprintw(main_win, safe_h - 1, safe_w - strlen(help) - 2, "%s", help);
 
-        // Static Lyric Print (No scroll offset)
+        // 3. Lyrics
         werase(lyr_sub);
         wattron(lyr_sub, COLOR_PAIR(3));
         for (int i = 0; i < lh && i < m.lyric_count; i++) {
@@ -144,6 +171,10 @@ void draw_dashboard() {
 
         update_panels();
         doupdate();
+
+        // 4. Render Art (This happens last on top of everything)
         render_art(art_x + 1, art_y + 1, art_w, art_h);
+        
+        last_scroll_pos = -1; 
     }
 }
