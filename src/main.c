@@ -51,7 +51,7 @@ int main() {
     init_ui();
     DBG("CHECKPOINT: init_ui() Success");
 
-    const char *fmt = "TITLE|{{title}}¶ARTIST|{{artist}}¶ALBUM|{{album}}¶PATH|{{xesam:url}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶LYRICS|{{xesam:asText}}¶[[END]]¶";
+    const char *fmt = "TITLE|{{xesam:title}}¶ARTIST|{{xesam:artist}}¶ALBUM|{{xesam:album}}¶PATH|{{xesam:url}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶LYRICS|{{xesam:asText}}¶[[END]]¶";
     char cmd[4096];
     snprintf(cmd, sizeof(cmd), "playerctl metadata --format '%s' 2>/dev/null", fmt);
 
@@ -68,21 +68,21 @@ int main() {
         if (ch == 'j' || ch == KEY_DOWN) { scroll_pos++; should_draw = true; }
         if (ch == 'k' || ch == KEY_UP)   { if (scroll_pos > 0) scroll_pos--; should_draw = true; }
 
-        // Polling Logic
+        // Inside the main while(1) loop:
         long now = get_ms();
         if (now - last_poll_time > POLL_INTERVAL_MS) {
             last_poll_time = now;
-            
+
             FILE *fp = popen(cmd, "r");
             if (fp) {
-                size_t bytes_read = fread(poll_buffer, 1, sizeof(poll_buffer) - 1, fp);
-                if (bytes_read > 0) {
-                    poll_buffer[bytes_read] = '\0'; // Null-terminate
-                    DBG("POLL: Received data (%zu bytes)", bytes_read);
+                // Read the entire output (multiline)
+                size_t read_bytes = fread(poll_buffer, 1, BUFFER_SIZE - 1, fp);
+                if (read_bytes > 0) {
+                    poll_buffer[read_bytes] = '\0';
                     parse_block(poll_buffer);
                     should_draw = true;
                 } else {
-                    DBG("POLL: No player found or no metadata available.");
+                    DBG("POLL: No data received");
                     clear_metadata();
                     should_draw = true;
                 }

@@ -33,21 +33,13 @@ void cleanup_ui(int sig) {
     exit(0);
 }
 
-// Replace render_art and draw_dashboard in ui.c:
-
 static void render_art(int x, int y, int w, int h, bool force) {
-    if (w <= 0 || h <= 0) return;
+    if (w <= 0 || h <= 0 || strlen(m.url) < 5) return;
     
-    char *source = NULL;
-    if (strlen(m.file_path) > 5) {
-        char *p = (strncmp(m.file_path, "file://", 7) == 0) ? m.file_path + 7 : m.file_path;
-        if (access(p, F_OK) == 0) source = p; 
-    } else if (strlen(m.art_url) > 5) {
-        char *p = (strncmp(m.art_url, "file://", 7) == 0) ? m.art_url + 7 : m.art_url;
-        if (access(p, F_OK) == 0) source = p;
-    }
-
-    if (!source) {
+    // Convert file:// URL to local path
+    char *source = (strncmp(m.url, "file://", 7) == 0) ? m.url + 7 : m.url;
+    
+    if (access(source, F_OK) != 0) {
         last_art_path[0] = '\0';
         return;
     }
@@ -57,7 +49,7 @@ static void render_art(int x, int y, int w, int h, bool force) {
     char cmd[16384];
     char *safe_path = sh_escape(source);
     
-    // Using -b for jp2a to handle darker backgrounds better like old code
+    // Render pipeline
     snprintf(cmd, sizeof(cmd), 
         "magick \"%s\" -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
         "jp2a -b --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'",
