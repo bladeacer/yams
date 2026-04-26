@@ -1,6 +1,7 @@
 #include <time.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdio.h>
 #include "utils.h"
 
 long get_ms() {
@@ -51,4 +52,23 @@ void url_decode(char *dst, const char *src) {
         }
     }
     *dst = '\0';
+}
+
+float get_image_aspect(const char* path) {
+    // If no path, return square aspect
+    if (!path || strlen(path) < 2) return 1.0f;
+
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 \"%s\"", path);
+    
+    FILE* fp = popen(cmd, "r");
+    if (!fp) return 1.0f;
+    
+    int w = 0, h = 0;
+    if (fscanf(fp, "%dx%d", &w, &h) != 2 || h == 0) {
+        pclose(fp);
+        return 1.0f;
+    }
+    pclose(fp);
+    return (float)w / (float)h;
 }

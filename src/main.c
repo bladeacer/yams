@@ -59,15 +59,29 @@ int main() {
     char poll_buffer[BUFFER_SIZE];
     DBG("CHECKPOINT: Entering Main Loop");
     while (1) {
+
         int ch = getch();
         bool should_draw = false;
 
-        if (ch == 'q') break;
-
-        // Trigger redraw on resize or scroll
-        if (ch == KEY_RESIZE) should_draw = true;
-        if (ch == 'j' || ch == KEY_DOWN) { scroll_pos++; should_draw = true; }
-        if (ch == 'k' || ch == KEY_UP)   { if (scroll_pos > 0) scroll_pos--; should_draw = true; }
+        if (ch != ERR) {
+            switch(ch) {
+                case 'q': cleanup_ui(0); break;
+                case 'j': case KEY_DOWN:
+                          scroll_pos++;
+                          should_draw = true; 
+                          break;
+                case 'k': case KEY_UP:
+                          scroll_pos--;
+                          should_draw = true; 
+                          break;
+                case KEY_RESIZE:
+                          resize_pending = true;
+                          // Immediate resizeterm call helps ncurses update its internal maxyx
+                          resizeterm(0, 0);
+                          should_draw = true;
+                          break;
+            }
+        }
 
         // Inside the main while(1) loop:
         long now = get_ms();
@@ -97,7 +111,7 @@ int main() {
             draw_dashboard(); 
             if (resize_pending) {
                 // Wait a tiny bit for the terminal to settle after resize
-                usleep(50000); 
+                usleep(30000); 
                 resize_pending = false;
                 draw_dashboard(); // Redraw once more with art
             }
