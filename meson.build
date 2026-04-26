@@ -10,8 +10,14 @@ project('yams', 'c',
 
 ncursesw = dependency('ncursesw')
 
+panelw = dependency('panelw', required : false)
+
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required : false)
+
+if not panelw.found()
+  panelw = cc.find_library('panelw', required : true)
+endif
 
 sources = [
   'src/main.c',
@@ -23,7 +29,8 @@ inc = include_directories('src')
 
 executable('yams',
   sources,
-  dependencies : [ncursesw, m_dep],
+  # 4. Add panelw to the dependencies list
+  dependencies : [ncursesw, panelw, m_dep],
   include_directories : inc,
   install : true
 )

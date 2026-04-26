@@ -1,3 +1,4 @@
+#include <panel.h>
 #include <ncurses.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -9,7 +10,8 @@
 
 bool resize_pending = false;
 int scroll_pos = 0;
-WINDOW *lyric_win = NULL;
+static WINDOW *lyr_win = NULL;
+static int last_scroll_pos = -1;
 char last_art_path[4096] = {0};
 
 void init_ui() {
@@ -101,6 +103,10 @@ static void render_art(int x, int y, int w, int h) {
     DBG("ART_RENDER: Success");
 }
 
+static WINDOW *main_win = NULL;
+static PANEL  *main_panel = NULL;
+static WINDOW *lyr_sub = NULL;
+
 void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -109,89 +115,109 @@ void draw_dashboard() {
     static int last_x = 0, last_y = 0;
     
     char *current_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
-    
-    // 1. DIRECT COMPARISON
-    bool path_changed = (strcmp(current_source, rendered_path_cache) != 0);
-    bool size_changed = (max_x != last_x || max_y != last_y);
-    
-    // 2. THE REBUILD CHECK
-    // Note: We check resize_pending, then IMMEDIATELY clear it 
-    // so it can't loop even if it's set globally.
-    bool force_resize = resize_pending;
-    resize_pending = false; 
+    bool needs_full_rebuild = (strcmp(current_source, rendered_path_cache) != 0) || 
+                               (max_x != last_x || max_y != last_y) || resize_pending;
 
-    bool needs_full_rebuild = path_changed || size_changed || force_resize;
-
-    if (needs_full_rebuild) {
-        // Log exactly why we are wiping the screen
-        DBG("UI_WIPE_TRIGGER: Path:%d Size:%d Signal:%d Source:%s", 
-             path_changed, size_changed, force_resize, current_source);
-
-        last_x = max_x;
-        last_y = max_y;
-        strncpy(rendered_path_cache, current_source, 4095);
-        
-        // Pure ncurses erase is safer here than ANSI escapes
-        erase();
-    }
-
-    // --- 3. GEOMETRY ---
+    // 1. GEOMETRY
     const int meta_h = 6;
     int art_x, art_y, art_w, art_h;
-    int lyr_x, lyr_y, lyr_w, lyr_h;
-    
-    float img_aspect = get_image_aspect(current_source);
-    float term_adj_aspect = (img_aspect > 0.1) ? img_aspect * 2.1 : 2.1;
-    bool vertical = (max_x < 100);
+    int lx, ly, lw, lh;
+    bool horizontal = (max_x > 90);
 
-    if (vertical) {
-        art_x = 4; art_y = meta_h + 2;
-        art_w = max_x - 8;
-        art_h = (int)(art_w / term_adj_aspect);
-        if (art_h > (max_y * 0.30)) art_h = (max_y * 0.30);
-        lyr_x = 2; lyr_y = art_y + art_h + 1;
-        lyr_w = max_x - 4; lyr_h = max_y - lyr_y - 1;
+    // We define a "Safe Area" that is 2 rows/cols smaller than the terminal
+    // to prevent the cursor from ever hitting the "Scroll Trigger" edge.
+    int safe_h = max_y - 2;
+    int safe_w = max_x - 2;
+
+    if (!horizontal) {
+        art_w = safe_w - 8; art_x = 4; art_y = meta_h + 1;
+        art_h = (int)(art_w / (get_image_aspect(current_source) * 2.1));
+        if (art_h > (safe_h * 0.40)) art_h = (safe_h * 0.40);
+        lx = 4; lw = art_w; ly = art_y + art_h + 1; lh = safe_h - ly;
     } else {
-        int split_x = (max_x * 0.45); 
-        art_x = 2; art_y = meta_h + 2;
-        art_w = split_x - 4;
-        art_h = (int)(art_w / term_adj_aspect);
-        if (art_h > (max_y - art_y - 2)) art_h = (max_y - art_y - 2);
-        lyr_x = split_x + 2; lyr_y = 1;
-        lyr_w = max_x - lyr_x - 2; lyr_h = max_y - 2;
-        for (int i = 1; i < max_y - 1; i++) mvaddch(i, split_x, ACS_VLINE);
+        int split = (safe_w * 0.40);
+        art_x = 2; art_y = meta_h + 1; art_w = split - 4;
+        art_h = (int)(art_w / (get_image_aspect(current_source) * 2.1));
+        if (art_h > (safe_h - art_y - 2)) art_h = (safe_h - art_y - 2);
+        lx = split + 2; ly = 1; lw = safe_w - lx; lh = safe_h - 1;
     }
 
-    // --- 4. RENDER TEXT ---
-    // We do NOT call clrtoeol() here because we already erased if needed.
-    // Calling clrtoeol() constantly can also flicker.
-    attron(A_BOLD | COLOR_PAIR(1));
-    mvprintw(1, 2, "[%s] %s", safe_str(m.status), safe_str(m.player));
-    mvprintw(2, 2, "Title: %.*s", (vertical ? max_x : lyr_x) - 10, safe_str(m.title));
-    attroff(A_BOLD);
-    
-    attron(COLOR_PAIR(2));
-    mvprintw(3, 2, "Artist: %.*s", (vertical ? max_x : lyr_x) - 10, safe_str(m.artist));
-    mvprintw(4, 2, "Album:  %.*s", (vertical ? max_x : lyr_x) - 10, safe_str(m.album));
-    attroff(COLOR_PAIR(2));
-
-    if (m.lyric_count > 0 && lyr_h > 0) {
-        attron(COLOR_PAIR(3));
-        for (int i = 0; i < lyr_h && (i + scroll_pos) < m.lyric_count; i++) {
-            if (m.lyrics[i + scroll_pos])
-                mvprintw(lyr_y + i, lyr_x, "%.*s", lyr_w, m.lyrics[i + scroll_pos]);
-        }
-        attroff(COLOR_PAIR(3));
-    }
-
-    mvprintw(max_y - 1, 2, "Scroll: j/k | Q: Quit");
-
-    // --- 5. SYNC ---
-    refresh(); 
-    fflush(stdout);
-
-    // --- 6. OVERLAY ART ---
+    // 2. PANEL REBUILD
     if (needs_full_rebuild) {
-        render_art(art_x, art_y, art_w, art_h);
+        resize_pending = false;
+        last_x = max_x; last_y = max_y;
+        strncpy(rendered_path_cache, current_source, 4095);
+
+        // Cleanup old panel architecture
+        if (main_panel) { del_panel(main_panel); main_panel = NULL; }
+        if (main_win) { delwin(main_win); main_win = NULL; }
+        if (lyr_sub) { delwin(lyr_sub); lyr_sub = NULL; }
+
+        // Create a Window that covers the SAFE AREA
+        main_win = newwin(safe_h, safe_w, 1, 1);
+        main_panel = new_panel(main_win);
+        
+        // Create a sub-window specifically for lyrics inside main_win
+        lyr_sub = subwin(main_win, lh, lw, ly, lx);
+        scrollok(lyr_sub, FALSE);
+
+        erase(); 
+        wnoutrefresh(stdscr); // Keep background clean
+        
+        // Draw static elements to main_win (0,0 is now the safe area top-left)
+        wattron(main_win, A_BOLD | COLOR_PAIR(1));
+        mvwprintw(main_win, 0, 1, "[%s] %s", safe_str(m.status), safe_str(m.player));
+        wattroff(main_win, A_BOLD);
+        
+        mvwprintw(main_win, 1, 1, "Title: %.*s", art_w, safe_str(m.title));
+        wattron(main_win, COLOR_PAIR(2));
+        mvwprintw(main_win, 2, 1, "Artist: %.*s", art_w, safe_str(m.artist));
+        mvwprintw(main_win, 3, 1, "Album:  %.*s", art_w, safe_str(m.album));
+        wattroff(main_win, COLOR_PAIR(2));
+
+        if (horizontal) {
+            for (int i = 0; i < safe_h; i++) mvwaddch(main_win, i, lx - 2, ACS_VLINE);
+        }
+        
+        mvwprintw(main_win, safe_h - 1, 1, "Scroll: j/k | Q: Quit");
+        last_scroll_pos = -1;
+    }
+
+
+    if (scroll_pos != last_scroll_pos || needs_full_rebuild) {
+        // A. Calculate Bounds
+        int max_scroll = (m.lyric_count > lh) ? (m.lyric_count - lh) : 0;
+        if (scroll_pos < 0) scroll_pos = 0;
+        if (scroll_pos > max_scroll) scroll_pos = max_scroll;
+
+        // B. Clear the SUB-WINDOW (not the whole panel)
+        werase(lyr_sub);
+        
+        // C. Re-draw the "Viewport"
+        wattron(lyr_sub, COLOR_PAIR(3));
+        for (int i = 0; i < lh; i++) {
+            int lyric_idx = i + scroll_pos;
+            if (lyric_idx < m.lyric_count && m.lyrics[lyric_idx]) {
+                // Draw relative to the sub-window (0, i)
+                mvwaddnstr(lyr_sub, i, 0, m.lyrics[lyric_idx], lw);
+            }
+        }
+        wattroff(lyr_sub, COLOR_PAIR(3));
+
+        // D. Commit changes to the Panel Stack
+        // This is the step that makes Panels "notice" the sub-window update
+        last_scroll_pos = scroll_pos;
+        
+        update_panels(); // Refreshes the Z-order and virtual screen
+        doupdate();      // Actually pushes the bits to the terminal
+
+        // E. Prevent the "Terminal Nudge"
+        printf("\033[H");
+        fflush(stdout);
+    }
+
+    // 4. THE ART (Only on full rebuild to avoid lag)
+    if (needs_full_rebuild) {
+        render_art(art_x + 1, art_y + 1, art_w, art_h);
     }
 }
