@@ -46,6 +46,7 @@ int main() {
     DBG("CHECKPOINT: Starting Signal Setup");
     signal(SIGINT, handle_exit);
     signal(SIGTERM, handle_exit);
+    signal(SIGWINCH, handle_winch);
 
     DBG("CHECKPOINT: Starting init_ui()");
     init_ui();
@@ -74,7 +75,9 @@ int main() {
             last_poll_time = now;
 
             FILE *fp = popen(cmd, "r");
-            if (fp) {
+            if (!fp) {
+                DBG("UI_ERROR: popen failed for cmd: %s", cmd);
+            } else {
                 // Read the entire output (multiline)
                 size_t read_bytes = fread(poll_buffer, 1, BUFFER_SIZE - 1, fp);
                 if (read_bytes > 0) {
@@ -92,6 +95,12 @@ int main() {
 
         if (should_draw) {
             draw_dashboard(); 
+            if (resize_pending) {
+                // Wait a tiny bit for the terminal to settle after resize
+                usleep(50000); 
+                resize_pending = false;
+                draw_dashboard(); // Redraw once more with art
+            }
         }
 
         usleep(10000); 
