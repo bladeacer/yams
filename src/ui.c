@@ -1,4 +1,5 @@
 #include <ncurses.h>
+#include <wchar.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,21 +82,39 @@ void draw_dashboard() {
         refresh(); return;
     }
 
-    // Left Side Info
+    // --- Left Side Info ---
     attron(A_BOLD | COLOR_PAIR(1));
     mvprintw(1, 2, "[%s] %s", m.status, m.player);
-    mvprintw(2, 2, "%.*s", split - 4, m.title);
+    
+    // Safely draw Title (handles CJK width)
+    move(2, 2);
+    // mvwaddnstr is better for UTF-8 than printf truncation
+    mvwaddnstr(stdscr, 2, 2, m.title, split - 4); 
     attroff(A_BOLD);
     
     attron(COLOR_PAIR(2));
-    mvprintw(3, 2, "Artist: %.*s", split - 12, m.artist);
-    mvprintw(4, 2, "Album:  %.*s", split - 12, m.album);
+    mvprintw(3, 2, "Artist: ");
+    mvwaddnstr(stdscr, 3, 10, m.artist, split - 12);
+    
+    mvprintw(4, 2, "Album:  ");
+    mvwaddnstr(stdscr, 4, 10, m.album, split - 12);
     attroff(COLOR_PAIR(2));
 
-    // Right Side Lyrics
+    // --- Right Side Lyrics ---
     attron(COLOR_PAIR(3));
-    for (int i = 0; i < max_y - 2 && (i + scroll_pos) < m.lyric_count; i++) {
-        mvprintw(i + 1, split + 2, "%.*s", max_x - split - 4, m.lyrics[i + scroll_pos]);
+    int lyric_area_h = max_y - 2;
+
+    // Scrolling boundary protection
+    if (m.lyric_count > lyric_area_h) {
+        if (scroll_pos > m.lyric_count - lyric_area_h)
+            scroll_pos = m.lyric_count - lyric_area_h;
+    } else {
+        scroll_pos = 0;
+    }
+
+    for (int i = 0; i < lyric_area_h && (i + scroll_pos) < m.lyric_count; i++) {
+        // Use mvwaddnstr to prevent CJK truncation artifacts
+        mvwaddnstr(stdscr, i + 1, split + 2, m.lyrics[i + scroll_pos], max_x - split - 4);
     }
     attroff(COLOR_PAIR(3));
 

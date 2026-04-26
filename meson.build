@@ -8,7 +8,7 @@ project('yams', 'c',
   ]
 )
 
-ncurses = dependency('ncurses')
+ncursesw = dependency('ncursesw')
 
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required : false)
@@ -17,6 +17,6 @@ sources = ['src/main.c', 'src/ui.c', 'src/metadata.c', 'src/utils.c']
 
 executable('yams',
   sources,
-  dependencies : [ncurses, m_dep],
+  dependencies : [ncursesw, m_dep],
   install : true
 )

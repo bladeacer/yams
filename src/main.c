@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <ncurses.h>
+#include <locale.h>
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
@@ -13,6 +14,7 @@
 #define RESIZE_DELAY_MS 200
 
 int main() {
+    setlocale(LC_ALL, "");
     signal(SIGINT, cleanup_ui);
     init_ui();
 
