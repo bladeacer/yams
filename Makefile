@@ -28,3 +28,6 @@ install: build ## Install yams to the system
 
 uninstall: ## Remove yams from the system
 	@sudo rm -f /usr/local/bin/yams
+
+logs: ## Check logs
+	@tail -f yams.log

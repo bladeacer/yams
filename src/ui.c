@@ -5,6 +5,7 @@
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
+#include "debug.h"
 
 bool resize_pending = false;
 int scroll_pos = 0;
@@ -35,42 +36,47 @@ void cleanup_ui(int sig) {
 
 static void render_art(int x, int y, int w, int h, bool force) {
     if (w <= 0 || h <= 0 || strlen(m.url) < 5) return;
+
+    char decoded_path[4096];
+    // 1. Strip file:// prefix
+    char *raw_path = (strncmp(m.url, "file://", 7) == 0) ? m.url + 7 : m.url;
     
-    char *source = (strncmp(m.url, "file://", 7) == 0) ? m.url + 7 : m.url;
-    if (access(source, F_OK) != 0) {
+    // 2. Decode %20 and other URL entities
+    url_decode(decoded_path, raw_path);
+
+    // 3. Telemetry: Check if the file is actually reachable now
+    if (access(decoded_path, F_OK) != 0) {
+        DBG("ART_ERR: File not found after decode: %s", decoded_path);
         last_art_path[0] = '\0';
         return;
     }
 
-    if (!force && strcmp(source, last_art_path) == 0 && w == last_w && h == last_h) return;
+    if (!force && strcmp(decoded_path, last_art_path) == 0 && w == last_w && h == last_h) return;
 
     char cmd[16384];
-    char *safe_path = sh_escape(source);
+    char *safe_path = sh_escape(decoded_path);
     
-    /*
-     * 1. ffmpeg: tries to extract attached picture. We removed '-c copy' to force 
-     * a re-decode to mjpeg if the internal format is weird (fixes decode delegate error).
-     * 2. magick: converts to webp for jp2a.
-     * 3. jp2a: generates the colored ANSI.
-     * 4. sed: Prepends the ANSI horizontal jump code to EVERY line of art.
-     */
+    // The "Golden" Pipeline
     snprintf(cmd, sizeof(cmd), 
-        "(ffmpeg -hide_banner -loglevel error -i \"%s\" -map 0:v:0 -f mjpeg - || cat \"%s\") 2>/dev/null | "
+        "(ffmpeg -hide_banner -loglevel error -i \"%s\" -map 0:v:0 -vframes 1 -f mjpeg - || head -c 1M \"%s\") 2>/dev/null | "
         "magick - -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
         "jp2a -b --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'",
         safe_path, safe_path, w*2, h*2, w*2, h*2, w, x + 1);
 
-    // Explicitly move the physical terminal cursor to our starting Y, column 1
-    printf("\x1b[%d;1H", y + 1); 
-    
+    DBG("ART_EXEC: %s", decoded_path);
+
+    // Draw logic
+    printf("\x1b[%d;1H", y + 1);
+    fflush(stdout);
+
     FILE *fp = popen(cmd, "r");
     if (fp) {
         char line[4096];
         while (fgets(line, sizeof(line), fp)) {
-            fputs(line, stdout); // sed handles the horizontal X offset per line
+            fputs(line, stdout);
         }
         pclose(fp);
-        strncpy(last_art_path, source, 4095);
+        strncpy(last_art_path, decoded_path, 4095);
         last_w = w; last_h = h;
     }
     fflush(stdout);
