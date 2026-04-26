@@ -1,6 +1,6 @@
-# yaas
+# yams
 
-Yet another audio status indicator. playerctl wrapper go brr.
+Yet another media status indicator/screensaver. playerctl wrapper go brr.
 
 ## Requirements
 
