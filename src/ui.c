@@ -35,18 +35,18 @@ void cleanup_ui(int sig) {
 }
 
 static void render_art(int x, int y, int w, int h, bool force) {
-    if (w <= 0 || h <= 0 || strlen(m.url) < 5) return;
+    if (w <= 0 || h <= 0) return;
+
+    // Prioritize art_url, fallback to file_path
+    char *input_url = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
+    if (strlen(input_url) < 5) return;
 
     char decoded_path[4096];
-    // 1. Strip file:// prefix
-    char *raw_path = (strncmp(m.url, "file://", 7) == 0) ? m.url + 7 : m.url;
-    
-    // 2. Decode %20 and other URL entities
+    char *raw_path = (strncmp(input_url, "file://", 7) == 0) ? input_url + 7 : input_url;
     url_decode(decoded_path, raw_path);
 
-    // 3. Telemetry: Check if the file is actually reachable now
     if (access(decoded_path, F_OK) != 0) {
-        DBG("ART_ERR: File not found after decode: %s", decoded_path);
+        DBG("ART_ERR: File not found: %s", decoded_path);
         last_art_path[0] = '\0';
         return;
     }
@@ -56,16 +56,17 @@ static void render_art(int x, int y, int w, int h, bool force) {
     char cmd[16384];
     char *safe_path = sh_escape(decoded_path);
     
-    // The "Golden" Pipeline
+    /* * Pipeline Changes:
+     * magick - : Read from pipe
+     * -fuzz 10%% -trim +repage : Trims background/borders with 10% tolerance
+     * -thumbnail ... : Resizes after trimming
+     */
     snprintf(cmd, sizeof(cmd), 
         "(ffmpeg -hide_banner -loglevel error -i \"%s\" -map 0:v:0 -vframes 1 -f mjpeg - || head -c 1M \"%s\") 2>/dev/null | "
-        "magick - -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
+        "magick - -fuzz 10%% -trim +repage -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
         "jp2a -b --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'",
         safe_path, safe_path, w*2, h*2, w*2, h*2, w, x + 1);
 
-    DBG("ART_EXEC: %s", decoded_path);
-
-    // Draw logic
     printf("\x1b[%d;1H", y + 1);
     fflush(stdout);
 
@@ -86,6 +87,15 @@ void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
     if (max_y < 10 || max_x < 40) return;
+
+    static char art_url_cache[4096] = {0};
+
+    // Determine what we should be drawing
+    char *current_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
+    bool path_changed = (strcmp(current_source, art_url_cache) != 0);
+    
+    // We redraw if the path changed OR if ncurses was resized (which wipes the screen)
+    bool redraw_needed = path_changed || resize_pending;
 
     erase();
 
@@ -122,14 +132,18 @@ void draw_dashboard() {
         attroff(COLOR_PAIR(3));
     }
 
-    // Refresh text FIRST
+    // Push the text layers to the terminal
     refresh();
-    
-    // Give ncurses a microsecond to breathe
     fflush(stdout); 
 
-    if (!resize_pending) {
-        // Now that ncurses is done writing its frame, we "paint" our art on top
+    // Render art only if the source changed or screen was wiped
+    if (redraw_needed) {
         render_art(2, 6, split - 5, max_y - 8, true);
+        strncpy(art_url_cache, current_source, 4095);
+        
+        // Reset resize state after the image is successfully painted
+        if (resize_pending) {
+            resize_pending = false;
+        }
     }
 }

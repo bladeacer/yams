@@ -29,11 +29,11 @@ void parse_block(char *block) {
         else if (strncmp(token, "ALBUM|", 6) == 0) strncpy(m.album, token + 6, 511);
         else if (strncmp(token, "STATUS|", 7) == 0) strncpy(m.status, token + 7, 31);
         else if (strncmp(token, "PLAYER|", 7) == 0) strncpy(m.player, token + 7, 63);
-        else if (strncmp(token, "PATH|", 5) == 0) strncpy(m.url, token + 5, 4095);
+        else if (strncmp(token, "PATH|", 5) == 0) strncpy(m.file_path, token + 5, 4095);
+        else if (strncmp(token, "ART|", 4) == 0) strncpy(m.art_url, token + 4, 4095);
         else if (strncmp(token, "LYRICS|", 7) == 0) {
             char *line_start = token + 7;
             char *line_end;
-            // Preserves empty lines by searching for \n one by one
             while ((line_end = strchr(line_start, '\n')) != NULL && m.lyric_count < MAX_LYRIC_LINES) {
                 *line_end = '\0';
                 m.lyrics[m.lyric_count++] = strdup(line_start);
