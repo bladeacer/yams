@@ -12,8 +12,15 @@ char* sh_escape(const char* src) {
     static char escaped[8192];
     char *dest = escaped;
     while (*src && (dest - escaped < 8190)) {
-        if (*src == '\'') { memcpy(dest, "'\\''", 4); dest += 4; }
-        else { *dest++ = *src; }
+        if (*src == '\'') { 
+            // Close quote, add escaped quote, reopen quote
+            if (dest - escaped < 8186) {
+                memcpy(dest, "'\\''", 4); 
+                dest += 4; 
+            }
+        } else { 
+            *dest++ = *src; 
+        }
         src++;
     }
     *dest = '\0';

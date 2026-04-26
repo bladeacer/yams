@@ -36,7 +36,6 @@ void cleanup_ui(int sig) {
 static void render_art(int x, int y, int w, int h, bool force) {
     if (w <= 0 || h <= 0 || strlen(m.url) < 5) return;
     
-    // Convert file:// URL to local path
     char *source = (strncmp(m.url, "file://", 7) == 0) ? m.url + 7 : m.url;
     
     if (access(source, F_OK) != 0) {
@@ -49,9 +48,12 @@ static void render_art(int x, int y, int w, int h, bool force) {
     char cmd[16384];
     char *safe_path = sh_escape(source);
     
-    // Render pipeline
+    // FFmpeg extracts the first video stream (embedded art) as mjpeg
+    // Magick resizes that stream
+    // JP2A converts the final result to ASCII
     snprintf(cmd, sizeof(cmd), 
-        "magick \"%s\" -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
+        "ffmpeg -hide_banner -loglevel error -i \"%s\" -an -vcodec copy -f mjpeg - | "
+        "magick - -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
         "jp2a -b --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'",
         safe_path, w*2, h*2, w*2, h*2, w, x + 1);
 

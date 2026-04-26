@@ -29,18 +29,20 @@ void parse_block(char *block) {
         else if (strncmp(token, "ALBUM|", 6) == 0) strncpy(m.album, token + 6, 511);
         else if (strncmp(token, "STATUS|", 7) == 0) strncpy(m.status, token + 7, 31);
         else if (strncmp(token, "PLAYER|", 7) == 0) strncpy(m.player, token + 7, 63);
-        // Using PATH (xesam:url) as our primary art/file reference
         else if (strncmp(token, "PATH|", 5) == 0) strncpy(m.url, token + 5, 4095);
         else if (strncmp(token, "LYRICS|", 7) == 0) {
-            char *lyric_ptr = token + 7;
-            char *line = strtok(lyric_ptr, "\n");
-            while (line && m.lyric_count < MAX_LYRIC_LINES) {
-                m.lyrics[m.lyric_count++] = strdup(line);
-                line = strtok(NULL, "\n");
+            char *line_start = token + 7;
+            char *line_end;
+            // Preserves empty lines by searching for \n one by one
+            while ((line_end = strchr(line_start, '\n')) != NULL && m.lyric_count < MAX_LYRIC_LINES) {
+                *line_end = '\0';
+                m.lyrics[m.lyric_count++] = strdup(line_start);
+                line_start = line_end + 1;
+            }
+            if (*line_start && m.lyric_count < MAX_LYRIC_LINES) {
+                m.lyrics[m.lyric_count++] = strdup(line_start);
             }
         }
-
         current = next_sep + strlen(delim);
     }
-    DBG("PARSER: Updated '%s' by '%s' [%d lines of lyrics]", m.title, m.artist, m.lyric_count);
 }
