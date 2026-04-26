@@ -9,15 +9,17 @@
 
 #define MAX_LYRIC_LINES 3000
 #define BUFFER_SIZE 65536
-#define CMD_BUFFER 8192
+#define CMD_BUFFER 16384 // Doubled to prevent truncation warnings
 
 typedef struct {
-    char title[512], artist[512], album[512], player[64], art_url[4096], status[32]; 
+    char title[512], artist[512], album[512], player[64], art_url[4096], status[32];
+    char genre[256], composer[512];
     char *lyrics[MAX_LYRIC_LINES];
     int lyric_count;
 } Metadata;
 
 Metadata m;
+char last_art_url[4096] = {0}; // Art "Hash"
 int scroll_pos = 0;
 
 void cleanup(int sig) {
@@ -37,45 +39,43 @@ void clear_m() {
 void render_art(int x, int y, int w, int h) {
     if (strlen(m.art_url) < 5 || strcmp(m.art_url, "null") == 0) {
         mvprintw(y + (h/2), x + (w/2) - 8, "[ No Artwork ]");
+        last_art_url[0] = '\0';
         return;
+    }
+
+    // Optimization: If art URL is same as last time, don't re-run the pipe
+    // Note: This assumes terminal wasn't cleared/resized.
+    static int last_w = 0, last_h = 0;
+    if (strcmp(m.art_url, last_art_url) == 0 && w == last_w && h == last_h) {
+        return; 
     }
 
     char cmd[CMD_BUFFER];
     char *path = (strncmp(m.art_url, "file://", 7) == 0) ? m.art_url + 7 : m.art_url;
     
-    /* Optimized Shell Pipe:
-       1. Convert to webp/thumbnail
-       2. jp2a generates 24-bit ANSI
-       3. sed injects the 'Move to Column X' code for EVERY line
-    */
+    // Using (int) casts to silence compiler range warnings
     snprintf(cmd, sizeof(cmd),
         "magick \"%s\" -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
         "jp2a -b --width=%d --color-depth=24 - | "
-        "sed 's/^/\\033[%dG/'", 
-        path, w*2, h*2, w*2, h*2, w, x + 1);
+        "sed 's/^/\\x1b[%dG/'", 
+        path, (int)w*2, (int)h*2, (int)w*2, (int)h*2, (int)w, (int)x + 1);
 
-    // Tell ncurses where we think the cursor should be
+    // Position cursor for ncurses, then manual ANSI jump
     move(y, x);
     refresh();
-
-    // Use absolute ANSI positioning to 'force' the start of the block
-    // \033[H is the 'cursor position' escape code
-    printf("\033[%d;%dH", y + 1, x + 1);
+    printf("\x1b[%d;%dH", y + 1, x + 1);
     
     FILE *fp = popen(cmd, "r");
     if (fp) {
-        char line[2048];
-        int current_row = 0;
-        while (fgets(line, sizeof(line), fp) && current_row < h) {
-            // Print line (which includes its own horizontal offset from sed)
-            printf("%s", line);
-            // Move cursor down one line and back to X manually for the next line
-            printf("\033[%d;%dH", y + 1 + (++current_row), x + 1);
+        char line[4096];
+        while (fgets(line, sizeof(line), fp)) {
+            // Using raw write to stdout to avoid ncurses string sanitization
+            fwrite(line, 1, strlen(line), stdout);
         }
         pclose(fp);
+        strncpy(last_art_url, m.art_url, sizeof(last_art_url)-1);
+        last_w = w; last_h = h;
     }
-    
-    // Crucial: Push the buffer to the terminal immediately
     fflush(stdout);
 }
 
@@ -84,7 +84,7 @@ void draw_dashboard() {
     getmaxyx(stdscr, max_y, max_x);
     int split = max_x / 2;
 
-    clear();
+    erase(); // Clear without flicker
     if (strlen(m.title) == 0) {
         attron(A_BOLD | COLOR_PAIR(1));
         mvprintw(max_y/2, (max_x/2) - 8, "YAMS : STANDBY");
@@ -93,18 +93,20 @@ void draw_dashboard() {
         return;
     }
 
-    // Header with Player Status
+    // Header Area
     attron(A_BOLD | COLOR_PAIR(1));
     mvprintw(1, 2, "[%s] %s", m.status, m.player);
     mvprintw(2, 2, "%.*s", split - 4, m.title);
     attroff(A_BOLD);
     
     attron(COLOR_PAIR(2));
-    mvprintw(3, 2, "Artist: %.*s", split - 12, m.artist);
-    mvprintw(4, 2, "Album:  %.*s", split - 12, m.album);
+    mvprintw(3, 2, "Artist:   %.*s", split - 12, m.artist);
+    mvprintw(4, 2, "Album:    %.*s", split - 12, m.album);
+    if (strlen(m.genre) > 0)    mvprintw(5, 2, "Genre:    %.*s", split - 12, m.genre);
+    if (strlen(m.composer) > 0) mvprintw(6, 2, "Composer: %.*s", split - 12, m.composer);
     attroff(COLOR_PAIR(2));
     
-    mvhline(6, 2, ACS_HLINE, split - 4);
+    mvhline(8, 2, ACS_HLINE, split - 4);
 
     // Lyrics Column
     attron(COLOR_PAIR(3));
@@ -114,9 +116,8 @@ void draw_dashboard() {
     }
     attroff(COLOR_PAIR(3));
 
-    // Render 24-bit Art
-    render_art(2, 7, split - 6, max_y - 9);
-    refresh();
+    refresh(); // Push text first
+    render_art(2, 9, split - 6, max_y - 11);
 }
 
 void parse_block(char *block) {
@@ -127,6 +128,8 @@ void parse_block(char *block) {
         if (strncmp(token, "TITLE|", 6) == 0) strncpy(m.title, token + 6, 511);
         else if (strncmp(token, "ARTIST|", 7) == 0) strncpy(m.artist, token + 7, 511);
         else if (strncmp(token, "ALBUM|", 6) == 0) strncpy(m.album, token + 6, 511);
+        else if (strncmp(token, "GENRE|", 6) == 0) strncpy(m.genre, token + 6, 255);
+        else if (strncmp(token, "COMP|", 5) == 0) strncpy(m.composer, token + 5, 511);
         else if (strncmp(token, "PLAYER|", 7) == 0) strncpy(m.player, token + 7, 63);
         else if (strncmp(token, "STATUS|", 7) == 0) strncpy(m.status, token + 7, 31);
         else if (strncmp(token, "ART|", 4) == 0) strncpy(m.art_url, token + 4, 4095);
@@ -148,14 +151,12 @@ int main() {
     signal(SIGINT, cleanup);
     initscr(); start_color(); use_default_colors();
     curs_set(0); noecho(); keypad(stdscr, TRUE); timeout(50);
-
     init_pair(1, COLOR_CYAN, -1);
     init_pair(2, COLOR_GREEN, -1);
     init_pair(3, 250, -1);
 
-    // Added STATUS|{{status}} to the format
-    const char *fmt = "TITLE|{{title}}¶ARTIST|{{artist}}¶ALBUM|{{album}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶ART|{{mpris:artUrl}}¶LYRICS|{{xesam:asText}}¶[[END]]¶";
-    char cmd[1024];
+    const char *fmt = "TITLE|{{title}}¶ARTIST|{{artist}}¶ALBUM|{{album}}¶GENRE|{{genre}}¶COMP|{{composer}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶ART|{{mpris:artUrl}}¶LYRICS|{{xesam:asText}}¶[[END]]¶";
+    char cmd[2048];
     snprintf(cmd, sizeof(cmd), "playerctl metadata --follow --format '%s'", fmt);
     
     FILE *pipe = popen(cmd, "r");
@@ -184,7 +185,6 @@ int main() {
                 strcat(full_buffer, temp);
                 total_bytes += n;
             }
-
             char *end_marker = strstr(full_buffer, "[[END]]");
             if (end_marker) {
                 parse_block(full_buffer);
@@ -199,7 +199,6 @@ int main() {
             fcntl(fd, F_SETFL, flags | O_NONBLOCK);
         }
     }
-
     cleanup(0);
     return 0;
 }
