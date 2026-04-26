@@ -51,7 +51,7 @@ int main() {
     init_ui();
     DBG("CHECKPOINT: init_ui() Success");
 
-    const char *fmt = "TITLE|{{title}}¶ARTIST|{{artist}}¶ALBUM|{{album}}¶PATH|{{xesam:url}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶ART|{{mpris:artUrl}}¶[[END]]¶";
+    const char *fmt = "TITLE|{{title}}¶ARTIST|{{artist}}¶ALBUM|{{album}}¶PATH|{{xesam:url}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶LYRICS|{{xesam:asText}}¶[[END]]¶";
     char cmd[4096];
     snprintf(cmd, sizeof(cmd), "playerctl metadata --format '%s' 2>/dev/null", fmt);
 
@@ -75,13 +75,16 @@ int main() {
             
             FILE *fp = popen(cmd, "r");
             if (fp) {
-                if (fgets(poll_buffer, sizeof(poll_buffer), fp)) {
-                    DBG("POLL: Received data (%zu bytes)", strlen(poll_buffer));
+                size_t bytes_read = fread(poll_buffer, 1, sizeof(poll_buffer) - 1, fp);
+                if (bytes_read > 0) {
+                    poll_buffer[bytes_read] = '\0'; // Null-terminate
+                    DBG("POLL: Received data (%zu bytes)", bytes_read);
                     parse_block(poll_buffer);
                     should_draw = true;
                 } else {
                     DBG("POLL: No player found or no metadata available.");
-                    // Optional: clear_metadata() here if you want it to go to standby
+                    clear_metadata();
+                    should_draw = true;
                 }
                 pclose(fp);
             }

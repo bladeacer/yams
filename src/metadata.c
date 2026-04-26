@@ -20,10 +20,7 @@ void clear_metadata() {
 
 void parse_block(char *block) {
     // 1. Clear old data
-    for (int i = 0; i < m.lyric_count; i++) {
-        if (m.lyrics[i]) free(m.lyrics[i]);
-    }
-    memset(&m, 0, sizeof(Metadata));
+    clear_metadata();
 
     // 2. Parse New Data
     char *current = block;
@@ -37,8 +34,12 @@ void parse_block(char *block) {
         if (strncmp(token, "TITLE|", 6) == 0) strncpy(m.title, token + 6, 511);
         else if (strncmp(token, "ARTIST|", 7) == 0) strncpy(m.artist, token + 7, 511);
         else if (strncmp(token, "STATUS|", 7) == 0) strncpy(m.status, token + 7, 31);
-        else if (strncmp(token, "PATH|", 5) == 0) strncpy(m.file_path, token + 5, 4095);
-        else if (strncmp(token, "ART|", 4) == 0) strncpy(m.art_url, token + 4, 4095);
+        // Map PATH (xesam:url) to art_url for the renderer
+        else if (strncmp(token, "PATH|", 5) == 0) strncpy(m.art_url, token + 5, 4095);
+        // Map any multiline text to lyrics
+        else if (strncmp(token, "LYRICS|", 7) == 0) {
+            // Logic to split token + 7 into m.lyrics lines would go here
+        }
 
         current = next_sep + strlen(delim);
     }
