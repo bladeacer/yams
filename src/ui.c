@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
@@ -11,11 +12,12 @@
 bool resize_pending = false;
 int scroll_pos = 0; 
 static int last_scroll_pos = -1;
+static time_t last_update_time = 0;
 
 static WINDOW *main_win = NULL;
 static PANEL  *main_panel = NULL;
 static WINDOW *lyr_sub = NULL;
-static WINDOW *meta_sub = NULL; // New subwin for metadata isolation
+static WINDOW *meta_sub = NULL;
 
 void init_ui() {
     initscr();
@@ -56,10 +58,9 @@ static void render_art(int x, int y, int w, int h) {
     char *safe_path = sh_escape(decoded_path);
     char cmd[16384];
     
-    // Added -fuzz 10% -trim to discard redundant backgrounds (grey/black bars)
     snprintf(cmd, sizeof(cmd), 
         "(ffmpeg -hide_banner -loglevel error -i \"%s\" -vframes 1 -f mjpeg - 2>/dev/null) | "
-        "magick - -fuzz 10%% -trim -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
+        "magick - -fuzz 7.5%% -trim -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
         "jp2a -b --width=%d --height=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'", 
         safe_path, w*2, h*2, w*2, h*2, w, h, x + 1);
 
@@ -84,73 +85,96 @@ void draw_dashboard() {
     static char rendered_path_cache[4096] = {0};
     static int last_x = 0, last_y = 0;
     
+    // Check if player is actually active
+    bool player_active = (m.status && strlen(m.status) > 0 && strcmp(m.status, "Stopped") != 0);
+    
     char *current_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
+    
+    // Rebuild trigger: source change, resize, OR coming back from "No Player" state
     bool needs_full_rebuild = (strcmp(current_source, rendered_path_cache) != 0) || 
                                (max_x != last_x || max_y != last_y) || resize_pending;
 
-    int art_x, art_y, art_w, art_h;
-    int lx, ly, lw, lh;
-    int mx, my, mw, mh;
-    bool horizontal = (max_x > 90);
+    // Throttle: If we just updated less than 300ms ago, skip textual repaint to prevent skip-glitching
+    // Only applies if the change is just a path/metadata update, not a resize.
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    long now_ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    static long last_ms = 0;
 
-    int safe_h = max_y - 2;
-    int safe_w = max_x - 2;
-
-    if (!horizontal) {
-        art_w = safe_w - 6;
-        art_h = (int)(art_w * 0.48); 
-        if (art_h > (safe_h - 12)) art_h = safe_h - 12;
-        if (art_h < 5) art_h = 5;
-
-        art_x = 2; art_y = 0; 
-        
-        // Metadata directly under art
-        my = art_h + 1; mx = 2; mw = safe_w - 4; mh = 5;
-        
-        // Lyrics under metadata
-        ly = my + mh + 1; lx = 2; lw = safe_w - 4; lh = safe_h - ly;
-    } else {
-        int split = (int)(safe_w * 0.60);
-        art_w = split - 6;
-        art_h = (int)(art_w * 0.48); 
-        if (art_h > (safe_h - 8)) art_h = safe_h - 8;
-
-        art_x = 2; art_y = 0;
-
-        // Metadata under art (left column)
-        my = art_h + 1; mx = 2; mw = split - 4; mh = 5;
-
-        // Lyrics in right column
-        lx = split + 2; ly = 0; lw = safe_w - lx - 2; lh = safe_h;
+    if (needs_full_rebuild && (now_ms - last_ms < 300) && !resize_pending) {
+        return; 
     }
-
-    if (art_w > 1) art_w -= 1;
-    if (art_h > 1) art_h -= 1;
+    last_ms = now_ms;
 
     if (needs_full_rebuild) {
         resize_pending = false;
         last_x = max_x; last_y = max_y;
-        strncpy(rendered_path_cache, current_source, 4095);
+        strncpy(rendered_path_cache, player_active ? current_source : "", 4095);
 
+        // Cleanup windows
         if (main_panel) del_panel(main_panel);
         if (main_win) delwin(main_win);
         if (lyr_sub) delwin(lyr_sub);
         if (meta_sub) delwin(meta_sub);
 
+        int safe_h = max_y - 2;
+        int safe_w = max_x - 2;
         main_win = newwin(safe_h, safe_w, 1, 1);
         main_panel = new_panel(main_win);
-        meta_sub = derwin(main_win, mh, mw, my, mx);
-        lyr_sub = derwin(main_win, lh, lw, ly, lx);
         
         erase();
         wnoutrefresh(stdscr);
 
-        // 1. Metadata isolation subwindow
+        if (!player_active) {
+            // FALLBACK VIEW
+            const char* msg = "Awaiting Player Input...";
+            wattron(main_win, A_DIM);
+            mvwprintw(main_win, safe_h/2, (safe_w - strlen(msg))/2, "%s", msg);
+            wattroff(main_win, A_DIM);
+            
+            const char* help = "Q: Quit";
+            mvwprintw(main_win, safe_h - 1, safe_w - strlen(help) - 2, "%s", help);
+            
+            update_panels();
+            doupdate();
+            return;
+        }
+
+        // NORMAL VIEW CALCS
+        int art_x, art_y, art_w, art_h;
+        int lx, ly, lw, lh;
+        int mx, my, mw, mh;
+        bool horizontal = (max_x > 90);
+
+        if (!horizontal) {
+            art_w = safe_w - 6;
+            art_h = (int)(art_w * 0.48); 
+            if (art_h > (safe_h - 12)) art_h = safe_h - 12;
+            if (art_h < 5) art_h = 5;
+            art_x = 2; art_y = 0; 
+            my = art_h + 1; mx = 2; mw = safe_w - 4; mh = 5;
+            ly = my + mh + 1; lx = 2; lw = safe_w - 4; lh = safe_h - ly;
+        } else {
+            int split = (int)(safe_w * 0.60);
+            art_w = split - 6;
+            art_h = (int)(art_w * 0.48); 
+            if (art_h > (safe_h - 8)) art_h = safe_h - 8;
+            art_x = 2; art_y = 0;
+            my = art_h + 1; mx = 2; mw = split - 4; mh = 5;
+            lx = split + 2; ly = 0; lw = safe_w - lx - 2; lh = safe_h;
+        }
+
+        if (art_w > 1) art_w -= 1;
+        if (art_h > 1) art_h -= 1;
+
+        meta_sub = derwin(main_win, mh, mw, my, mx);
+        lyr_sub = derwin(main_win, lh, lw, ly, lx);
+
+        // 1. Metadata
         werase(meta_sub);
         wattron(meta_sub, A_BOLD | COLOR_PAIR(1));
         mvwprintw(meta_sub, 0, 0, "%s | %s", safe_str(m.status), safe_str(m.player));
         wattroff(meta_sub, A_BOLD);
-
         mvwprintw(meta_sub, 1, 0, "Title: %.*s", mw-7, safe_str(m.title));
         wattron(meta_sub, COLOR_PAIR(2));
         mvwprintw(meta_sub, 2, 0, "Artist: %.*s", mw-8, safe_str(m.artist));
@@ -172,9 +196,8 @@ void draw_dashboard() {
         update_panels();
         doupdate();
 
-        // 4. Render Art (This happens last on top of everything)
+        // 4. Render Art
         render_art(art_x + 1, art_y + 1, art_w, art_h);
-        
         last_scroll_pos = -1; 
     }
 }
