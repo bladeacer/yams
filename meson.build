@@ -13,7 +13,7 @@ ncurses = dependency('ncurses')
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required : false)
 
-sources = ['yams.c']
+sources = ['src/main.c', 'src/ui.c', 'src/metadata.c', 'src/utils.c']
 
 executable('yams',
   sources,
