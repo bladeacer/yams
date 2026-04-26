@@ -1,5 +1,4 @@
 #include <ncurses.h>
-#include <wchar.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,14 +8,22 @@
 
 bool resize_pending = false;
 int scroll_pos = 0;
-char last_art_url[4096] = {0};
+char last_art_path[4096] = {0};
+static int last_w = 0, last_h = 0;
 
 void init_ui() {
-    initscr(); start_color(); use_default_colors();
-    curs_set(0); noecho(); keypad(stdscr, TRUE); timeout(20);
-    init_pair(1, COLOR_CYAN, -1);
-    init_pair(2, COLOR_GREEN, -1);
-    init_pair(3, 250, -1);
+    initscr();
+    if (has_colors()) {
+        start_color();
+        use_default_colors();
+        init_pair(1, COLOR_CYAN, -1);
+        init_pair(2, COLOR_GREEN, -1);
+        init_pair(3, 250, -1);
+    }
+    curs_set(0); 
+    noecho(); 
+    keypad(stdscr, TRUE); 
+    timeout(20);
 }
 
 void cleanup_ui(int sig) {
@@ -26,40 +33,45 @@ void cleanup_ui(int sig) {
     exit(0);
 }
 
-static void render_art(int x, int y, int w, int h) {
+// Replace render_art and draw_dashboard in ui.c:
+
+static void render_art(int x, int y, int w, int h, bool force) {
     if (w <= 0 || h <= 0) return;
     
     char *source = NULL;
-    // Check path first
     if (strlen(m.file_path) > 5) {
         char *p = (strncmp(m.file_path, "file://", 7) == 0) ? m.file_path + 7 : m.file_path;
         if (access(p, F_OK) == 0) source = p; 
-    } 
+    } else if (strlen(m.art_url) > 5) {
+        char *p = (strncmp(m.art_url, "file://", 7) == 0) ? m.art_url + 7 : m.art_url;
+        if (access(p, F_OK) == 0) source = p;
+    }
 
-    // If no local file, don't attempt to render
-    if (!source) return;
+    if (!source) {
+        last_art_path[0] = '\0';
+        return;
+    }
 
-    static char last_source[4096] = {0};
-    if (strcmp(source, last_source) == 0) return;
+    if (!force && strcmp(source, last_art_path) == 0 && w == last_w && h == last_h) return;
 
-    // Use ffmpeg to extract the stream directly into the image pipeline
     char cmd[16384];
     char *safe_path = sh_escape(source);
+    
+    // Using -b for jp2a to handle darker backgrounds better like old code
     snprintf(cmd, sizeof(cmd), 
-        "ffmpeg -loglevel error -i '%s' -map 0:v -f image2 pipe:1 2>/dev/null | "
-        "magick - -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
-        "jp2a --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'",
+        "magick \"%s\" -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
+        "jp2a -b --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'",
         safe_path, w*2, h*2, w*2, h*2, w, x + 1);
 
-    strncpy(last_source, source, 4095);
-
-    move(y, x); refresh();
     printf("\x1b[%d;%dH", y + 1, x + 1);
+    
     FILE *fp = popen(cmd, "r");
     if (fp) {
         char line[4096];
         while (fgets(line, sizeof(line), fp)) fputs(line, stdout);
         pclose(fp);
+        strncpy(last_art_path, source, 4095);
+        last_w = w; last_h = h;
     }
     fflush(stdout);
 }
@@ -69,19 +81,22 @@ void draw_dashboard() {
     getmaxyx(stdscr, max_y, max_x);
     if (max_y < 10 || max_x < 40) return;
 
+    erase();
+
+    if (m.title[0] == '\0') {
+        attron(A_BOLD | COLOR_PAIR(1));
+        mvprintw(max_y / 2, (max_x - 14) / 2, "YAMS : STANDBY");
+        attroff(A_BOLD | COLOR_PAIR(1));
+        refresh();
+        return;
+    }
+
     int split = max_x / 2;
     int lyric_area_h = max_y - 2;
 
-    erase();
-
-    // --- LEFT SIDE: Static Metadata & Keybinds ---
     attron(A_BOLD | COLOR_PAIR(1));
     mvprintw(1, 2, "[%s] %s", m.status, m.player);
-    
-    // We use move + addstr to avoid byte-length issues with CJK in mvwprintw
-    move(2, 2);
-    addstr("Title: ");
-    addstr(m.title); 
+    mvwaddnstr(stdscr, 2, 2, m.title, split - 4);
     attroff(A_BOLD);
 
     attron(COLOR_PAIR(2));
@@ -89,44 +104,23 @@ void draw_dashboard() {
     mvprintw(4, 2, "Album:  %s", m.album);
     attroff(COLOR_PAIR(2));
 
-    // Keybind Indicators (pinned to bottom left)
-    attron(A_DIM);
-    mvprintw(max_y - 3, 2, "k / ↑ : Scroll Up");
-    mvprintw(max_y - 2, 2, "j / ↓ : Scroll Down");
-    attroff(A_DIM);
-
-    // Vertical Divider
     for (int y = 1; y < max_y - 1; y++) mvaddch(y, split, ACS_VLINE);
 
-    // --- RIGHT SIDE: Scrollable Lyrics ---
-    attron(COLOR_PAIR(3));
-
-    // Fix Scrolling Bounds
-    if (m.lyric_count <= lyric_area_h) {
-        scroll_pos = 0;
-    } else {
+    if (m.lyric_count > 0) {
+        if (scroll_pos > m.lyric_count - lyric_area_h) scroll_pos = m.lyric_count - lyric_area_h;
         if (scroll_pos < 0) scroll_pos = 0;
-        if (scroll_pos > m.lyric_count - lyric_area_h) 
-            scroll_pos = m.lyric_count - lyric_area_h;
-    }
-
-    for (int i = 0; i < lyric_area_h; i++) {
-        int idx = i + scroll_pos; // scroll_pos only shifts the lyric index
-        if (idx < m.lyric_count && m.lyrics[idx]) {
-            move(i + 1, split + 2);
-            
-            // addstr is UTF-8 aware. We don't manually truncate 
-            // to avoid cutting a 3-byte CJK character in half.
-            addstr(m.lyrics[idx]); 
-            
-            // Wipe any artifacts to the right of the text
-            clrtoeol(); 
+        attron(COLOR_PAIR(3));
+        for (int i = 0; i < lyric_area_h && (i + scroll_pos) < m.lyric_count; i++) {
+            mvwaddnstr(stdscr, i + 1, split + 2, m.lyrics[i + scroll_pos], max_x - split - 4);
         }
+        attroff(COLOR_PAIR(3));
     }
-    attroff(COLOR_PAIR(3));
 
+    // Refresh text FIRST
     refresh();
     
-    // Render Art (Static position on left side)
-    if (!resize_pending) render_art(2, 6, split - 5, max_y - 11);
+    // Draw art SECOND (force = true because we just erased)
+    if (!resize_pending) {
+        render_art(2, 6, split - 5, max_y - 8, true);
+    }
 }

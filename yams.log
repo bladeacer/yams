@@ -1,0 +1,39 @@
+
+--- SESSION START ---
+[17:14:03][DEBUG] Session ended via signal 2
+
+--- SESSION START ---
+[17:14:16][DEBUG] Session ended via signal 2
+
+--- SESSION START ---
+[17:19:24][DEBUG] Session ended via signal 2
+
+--- SESSION START ---
+[17:19:26][DEBUG] Session ended via signal 2
+
+--- SESSION START ---
+[17:19:34][DEBUG] Session ended via signal 2
+
+--- SESSION START (POLLING MODE) ---
+[17:22:49][DEBUG] Session ended via signal 15
+
+--- SESSION START (POLLING MODE) ---
+[17:23:52][DEBUG] CHECKPOINT: Starting Signal Setup
+[17:23:52][DEBUG] CHECKPOINT: Starting init_ui()
+[17:23:52][DEBUG] CHECKPOINT: init_ui() Success
+[17:23:52][DEBUG] CHECKPOINT: Entering Main Loop
+[17:23:52][DEBUG] Session ended via signal 15
+
+--- SESSION START (POLLING MODE) ---
+[17:24:37][DEBUG] CHECKPOINT: Starting Signal Setup
+[17:24:37][DEBUG] CHECKPOINT: Starting init_ui()
+[17:24:37][DEBUG] CHECKPOINT: init_ui() Success
+[17:24:37][DEBUG] CHECKPOINT: Entering Main Loop
+[17:24:37][DEBUG] Session ended via signal 15
+
+--- SESSION START (POLLING MODE) ---
+[17:25:05][DEBUG] CHECKPOINT: Starting Signal Setup
+[17:25:05][DEBUG] CHECKPOINT: Starting init_ui()
+[17:25:05][DEBUG] CHECKPOINT: init_ui() Success
+[17:25:05][DEBUG] CHECKPOINT: Entering Main Loop
+[17:25:05][DEBUG] Session ended via signal 15

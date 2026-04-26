@@ -2,18 +2,20 @@
 #define DEBUG_H
 
 #include <stdio.h>
+#include <time.h>
 
-/**
- * DBG Macro:
- * Wraps multiple fprintf calls in a do-while(0) block to ensure:
- * 1. It acts as a single statement (safe for if/else without braces).
- * 2. It requires a semicolon at the end.
- * 3. It has zero overhead when optimized.
- */
+extern FILE *log_file;
+
 #define DBG(...) \
     do { \
-        fprintf(stderr, "[YAMS_DEBUG] " __VA_ARGS__); \
-        fprintf(stderr, "\n"); \
+        if (log_file) { \
+            time_t now = time(NULL); \
+            struct tm *t = localtime(&now); \
+            fprintf(log_file, "[%02d:%02d:%02d][DEBUG] ", t->tm_hour, t->tm_min, t->tm_sec); \
+            fprintf(log_file, __VA_ARGS__); \
+            fprintf(log_file, "\n"); \
+            fflush(log_file); \
+        } \
     } while (0)
 
-#endif // DEBUG_H
+#endif

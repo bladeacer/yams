@@ -9,72 +9,91 @@
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
+#include "debug.h"
 
+FILE *log_file = NULL; 
+long last_poll_time = 0;
+FILE *player_pipe = NULL;
+long last_resize_time = 0;
+#define POLL_INTERVAL_MS 500  // Poll playerctl every 500ms
 #define BUFFER_SIZE 262144
-#define RESIZE_DELAY_MS 200
+
+void handle_exit(int sig) {
+    if (player_pipe) pclose(player_pipe);
+    if (log_file) {
+        DBG("Session ended via signal %d", sig);
+        fclose(log_file);
+    }
+    cleanup_ui(sig);
+}
+
+void handle_winch(int sig) {
+    (void)sig;
+    resize_pending = true;
+    last_resize_time = get_ms();
+    resizeterm(0, 0); 
+}
 
 int main() {
     setlocale(LC_ALL, "");
-    signal(SIGINT, cleanup_ui);
+
+    log_file = fopen("yams.log", "a");
+    if (log_file) {
+        fprintf(log_file, "\n--- SESSION START (POLLING MODE) ---\n");
+        fflush(log_file);
+    }
+
+    DBG("CHECKPOINT: Starting Signal Setup");
+    signal(SIGINT, handle_exit);
+    signal(SIGTERM, handle_exit);
+
+    DBG("CHECKPOINT: Starting init_ui()");
     init_ui();
+    DBG("CHECKPOINT: init_ui() Success");
 
-    const char *fmt = "TITLE|{{title}}¶ARTIST|{{artist}}¶ALBUM|{{album}}¶GENRE|{{xesam:genre}}¶COMP|{{xesam:composer}}¶PATH|{{xesam:url}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶ART|{{mpris:artUrl}}¶LYRICS|{{xesam:asText}}¶[[END]]¶";
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "playerctl metadata --follow --format '%s'", fmt);
-    
-    FILE *pipe = popen(cmd, "r");
-    int fd = fileno(pipe);
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    const char *fmt = "TITLE|{{title}}¶ARTIST|{{artist}}¶ALBUM|{{album}}¶PATH|{{xesam:url}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶ART|{{mpris:artUrl}}¶[[END]]¶";
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "playerctl metadata --format '%s' 2>/dev/null", fmt);
 
-    char *full_buffer = calloc(1, BUFFER_SIZE);
-    long last_resize_time = 0;
-
+    char poll_buffer[BUFFER_SIZE];
+    DBG("CHECKPOINT: Entering Main Loop");
     while (1) {
         int ch = getch();
         bool should_draw = false;
 
         if (ch == 'q') break;
 
-        if (ch == KEY_RESIZE) {
-            resize_pending = true;
-            last_resize_time = get_ms();
-            // Clear immediately on resize to prevent ghosting
-            erase(); refresh(); 
-        }
+        // Trigger redraw on resize or scroll
+        if (ch == KEY_RESIZE) should_draw = true;
+        if (ch == 'j' || ch == KEY_DOWN) { scroll_pos++; should_draw = true; }
+        if (ch == 'k' || ch == KEY_UP)   { if (scroll_pos > 0) scroll_pos--; should_draw = true; }
 
-        if (resize_pending && (get_ms() - last_resize_time > RESIZE_DELAY_MS)) {
-            resize_pending = false;
-            should_draw = true;
-        }
-
-        if (ch == 'j' || ch == KEY_DOWN) { 
-            scroll_pos++; 
-            should_draw = true; 
-        }
-        if (ch == 'k' || ch == KEY_UP) { 
-            if (scroll_pos > 0) scroll_pos--; 
-            should_draw = true; 
-        }
-
-        // Handle incoming metadata
-        char temp[8192];
-        int n = read(fd, temp, sizeof(temp) - 1);
-        if (n > 0) {
-            temp[n] = '\0';
-            strcat(full_buffer, temp);
-            if (strstr(full_buffer, "[[END]]")) {
-                parse_block(full_buffer);
-                should_draw = true;
-                full_buffer[0] = '\0';
+        // Polling Logic
+        long now = get_ms();
+        if (now - last_poll_time > POLL_INTERVAL_MS) {
+            last_poll_time = now;
+            
+            FILE *fp = popen(cmd, "r");
+            if (fp) {
+                if (fgets(poll_buffer, sizeof(poll_buffer), fp)) {
+                    DBG("POLL: Received data (%zu bytes)", strlen(poll_buffer));
+                    parse_block(poll_buffer);
+                    should_draw = true;
+                } else {
+                    DBG("POLL: No player found or no metadata available.");
+                    // Optional: clear_metadata() here if you want it to go to standby
+                }
+                pclose(fp);
             }
         }
 
         if (should_draw) {
-            draw_dashboard();
+            draw_dashboard(); 
         }
+
+        usleep(10000); 
     }
 
-    free(full_buffer);
-    cleanup_ui(0);
+    handle_exit(0); 
     return 0;
 }

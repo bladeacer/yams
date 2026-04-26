@@ -20,7 +20,8 @@ Should work with media players detectable by `playerctl`.
 
 ### Dev Dependencies
 
-- fswatch (fs watcher)
+- meson
+- ninja
 
 ## License
 

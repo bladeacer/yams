@@ -13,10 +13,17 @@ ncursesw = dependency('ncursesw')
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required : false)
 
-sources = ['src/main.c', 'src/ui.c', 'src/metadata.c', 'src/utils.c']
+sources = [
+  'src/main.c',
+  'src/ui.c',
+  'src/metadata.c',
+  'src/utils.c'
+]
+inc = include_directories('src')
 
 executable('yams',
   sources,
   dependencies : [ncursesw, m_dep],
+  include_directories : inc,
   install : true
 )
