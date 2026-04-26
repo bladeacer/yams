@@ -28,34 +28,30 @@ void cleanup_ui(int sig) {
 
 static void render_art(int x, int y, int w, int h) {
     if (w <= 0 || h <= 0) return;
-    char *source_raw = NULL;
-    int is_file = 0;
-
+    
+    char *source = NULL;
+    // Check path first
     if (strlen(m.file_path) > 5) {
         char *p = (strncmp(m.file_path, "file://", 7) == 0) ? m.file_path + 7 : m.file_path;
-        if (access(p, F_OK) == 0) { source_raw = p; is_file = 1; }
-    }
-    if (!source_raw && strlen(m.art_url) > 5) {
-        char *p = (strncmp(m.art_url, "file://", 7) == 0) ? m.art_url + 7 : m.art_url;
-        if (access(p, F_OK) == 0) { source_raw = p; is_file = 1; }
-        else if (strncmp(m.art_url, "http", 4) == 0) { source_raw = m.art_url; is_file = 0; }
-    }
+        if (access(p, F_OK) == 0) source = p; 
+    } 
 
-    static int last_w = 0, last_h = 0;
-    if (source_raw && strcmp(source_raw, last_art_url) == 0 && w == last_w && h == last_h) return;
+    // If no local file, don't attempt to render
+    if (!source) return;
 
+    static char last_source[4096] = {0};
+    if (strcmp(source, last_source) == 0) return;
+
+    // Use ffmpeg to extract the stream directly into the image pipeline
     char cmd[16384];
-    if (source_raw) {
-        char *safe_path = sh_escape(source_raw);
-        snprintf(cmd, sizeof(cmd), is_file ? 
-            "ffmpeg -loglevel error -i '%s' -map 0:v -f image2 pipe:1 | magick - -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | jp2a --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'" :
-            "magick '%s' -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | jp2a --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'",
-            safe_path, w*2, h*2, w*2, h*2, w, x + 1);
-        strncpy(last_art_url, source_raw, 4095);
-    } else {
-        snprintf(cmd, sizeof(cmd), "magick -size %dx%d canvas:black webp:- | jp2a --width=%d - | sed 's/^/\\x1b[%dG/'", w*10, h*10, w, x+1);
-        last_art_url[0] = '\0';
-    }
+    char *safe_path = sh_escape(source);
+    snprintf(cmd, sizeof(cmd), 
+        "ffmpeg -loglevel error -i '%s' -map 0:v -f image2 pipe:1 2>/dev/null | "
+        "magick - -thumbnail %dx%d^ -gravity center -extent %dx%d webp:- | "
+        "jp2a --width=%d --color-depth=24 - | sed 's/^/\\x1b[%dG/'",
+        safe_path, w*2, h*2, w*2, h*2, w, x + 1);
+
+    strncpy(last_source, source, 4095);
 
     move(y, x); refresh();
     printf("\x1b[%d;%dH", y + 1, x + 1);
@@ -64,7 +60,6 @@ static void render_art(int x, int y, int w, int h) {
         char line[4096];
         while (fgets(line, sizeof(line), fp)) fputs(line, stdout);
         pclose(fp);
-        last_w = w; last_h = h;
     }
     fflush(stdout);
 }
@@ -72,52 +67,66 @@ static void render_art(int x, int y, int w, int h) {
 void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
+    if (max_y < 10 || max_x < 40) return;
+
     int split = max_x / 2;
+    int lyric_area_h = max_y - 2;
 
     erase();
-    if (strlen(m.title) == 0) {
-        attron(A_BOLD | COLOR_PAIR(1));
-        mvprintw(max_y/2, (max_x/2)-8, "YAMS : STANDBY");
-        attroff(A_BOLD | COLOR_PAIR(1));
-        refresh(); return;
-    }
 
-    // --- Left Side Info ---
+    // --- LEFT SIDE: Static Metadata & Keybinds ---
     attron(A_BOLD | COLOR_PAIR(1));
     mvprintw(1, 2, "[%s] %s", m.status, m.player);
     
-    // Safely draw Title (handles CJK width)
+    // We use move + addstr to avoid byte-length issues with CJK in mvwprintw
     move(2, 2);
-    // mvwaddnstr is better for UTF-8 than printf truncation
-    mvwaddnstr(stdscr, 2, 2, m.title, split - 4); 
+    addstr("Title: ");
+    addstr(m.title); 
     attroff(A_BOLD);
-    
+
     attron(COLOR_PAIR(2));
-    mvprintw(3, 2, "Artist: ");
-    mvwaddnstr(stdscr, 3, 10, m.artist, split - 12);
-    
-    mvprintw(4, 2, "Album:  ");
-    mvwaddnstr(stdscr, 4, 10, m.album, split - 12);
+    mvprintw(3, 2, "Artist: %s", m.artist);
+    mvprintw(4, 2, "Album:  %s", m.album);
     attroff(COLOR_PAIR(2));
 
-    // --- Right Side Lyrics ---
-    attron(COLOR_PAIR(3));
-    int lyric_area_h = max_y - 2;
+    // Keybind Indicators (pinned to bottom left)
+    attron(A_DIM);
+    mvprintw(max_y - 3, 2, "k / ↑ : Scroll Up");
+    mvprintw(max_y - 2, 2, "j / ↓ : Scroll Down");
+    attroff(A_DIM);
 
-    // Scrolling boundary protection
-    if (m.lyric_count > lyric_area_h) {
-        if (scroll_pos > m.lyric_count - lyric_area_h)
-            scroll_pos = m.lyric_count - lyric_area_h;
-    } else {
+    // Vertical Divider
+    for (int y = 1; y < max_y - 1; y++) mvaddch(y, split, ACS_VLINE);
+
+    // --- RIGHT SIDE: Scrollable Lyrics ---
+    attron(COLOR_PAIR(3));
+
+    // Fix Scrolling Bounds
+    if (m.lyric_count <= lyric_area_h) {
         scroll_pos = 0;
+    } else {
+        if (scroll_pos < 0) scroll_pos = 0;
+        if (scroll_pos > m.lyric_count - lyric_area_h) 
+            scroll_pos = m.lyric_count - lyric_area_h;
     }
 
-    for (int i = 0; i < lyric_area_h && (i + scroll_pos) < m.lyric_count; i++) {
-        // Use mvwaddnstr to prevent CJK truncation artifacts
-        mvwaddnstr(stdscr, i + 1, split + 2, m.lyrics[i + scroll_pos], max_x - split - 4);
+    for (int i = 0; i < lyric_area_h; i++) {
+        int idx = i + scroll_pos; // scroll_pos only shifts the lyric index
+        if (idx < m.lyric_count && m.lyrics[idx]) {
+            move(i + 1, split + 2);
+            
+            // addstr is UTF-8 aware. We don't manually truncate 
+            // to avoid cutting a 3-byte CJK character in half.
+            addstr(m.lyrics[idx]); 
+            
+            // Wipe any artifacts to the right of the text
+            clrtoeol(); 
+        }
     }
     attroff(COLOR_PAIR(3));
 
     refresh();
-    if (!resize_pending) render_art(2, 9, split - 6, max_y - 11);
+    
+    // Render Art (Static position on left side)
+    if (!resize_pending) render_art(2, 6, split - 5, max_y - 11);
 }

@@ -27,25 +27,36 @@ int main() {
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
 
     char *full_buffer = calloc(1, BUFFER_SIZE);
-    int total_bytes = 0;
     long last_resize_time = 0;
 
     while (1) {
         int ch = getch();
+        bool should_draw = false;
+
         if (ch == 'q') break;
+
         if (ch == KEY_RESIZE) {
             resize_pending = true;
             last_resize_time = get_ms();
+            // Clear immediately on resize to prevent ghosting
+            erase(); refresh(); 
         }
 
         if (resize_pending && (get_ms() - last_resize_time > RESIZE_DELAY_MS)) {
             resize_pending = false;
-            draw_dashboard(); 
+            should_draw = true;
         }
 
-        if (ch == 'j' || ch == KEY_DOWN) { scroll_pos++; draw_dashboard(); }
-        if (ch == 'k' || ch == KEY_UP) { if (scroll_pos > 0) scroll_pos--; draw_dashboard(); }
+        if (ch == 'j' || ch == KEY_DOWN) { 
+            scroll_pos++; 
+            should_draw = true; 
+        }
+        if (ch == 'k' || ch == KEY_UP) { 
+            if (scroll_pos > 0) scroll_pos--; 
+            should_draw = true; 
+        }
 
+        // Handle incoming metadata
         char temp[8192];
         int n = read(fd, temp, sizeof(temp) - 1);
         if (n > 0) {
@@ -53,9 +64,13 @@ int main() {
             strcat(full_buffer, temp);
             if (strstr(full_buffer, "[[END]]")) {
                 parse_block(full_buffer);
-                draw_dashboard();
+                should_draw = true;
                 full_buffer[0] = '\0';
             }
+        }
+
+        if (should_draw) {
+            draw_dashboard();
         }
     }
 

@@ -1,7 +1,7 @@
 #ifndef METADATA_H
 #define METADATA_H
 
-#define MAX_LYRIC_LINES 3000
+#define MAX_LYRIC_LINES 5000
 
 typedef struct {
     char title[512], artist[512], album[512], player[64], art_url[4096], status[32];

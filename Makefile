@@ -1,3 +1,5 @@
+# Wrapper Makefile for yams (Meson/Ninja backend)
+
 .DEFAULT_GOAL := help
 
 help: ## Show this help message
@@ -13,27 +15,16 @@ build: ## Compile yams using Ninja
 	@if [ ! -d "build" ]; then meson setup build; fi
 	@ninja -C build
 
-run: clean ## Clean, build, and run
-	@$(MAKE) build
-	@./build/yams < /dev/tty
-
-watch: ## Watch source files using fswatch and hot-reload
-	@printf "\033[33mWatching for changes in .c and .h files (Ctrl+C to stop)...\033[0m\n"
-
-	@# Initial run
-	@$(MAKE) run; \
-		fswatch -o . -e "build/.*" -e ".*\.git/.*" -i ".*\.[ch]$$" | while read -r event; do \
-		clear; \
-		printf "\033[33mChange detected, restarting...\033[0m\n"; \
-		killall yams 2>/dev/null || true; \
-		$(MAKE) run; \
-		done
+run: ## Run compiled binary
+	$(MAKE) clean
+	$(MAKE) build
+	./build/yams
 
 clean: ## Remove build directory
-	@rm -rf build yams
+	@rm -rf build
 
 install: build ## Install yams to the system
 	@sudo ninja -C build install
 
 uninstall: ## Remove yams from the system
-	@sudo rm -f /usr/local/bin/yams 
+	@sudo rm -f /usr/local/bin/yams
