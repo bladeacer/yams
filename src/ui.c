@@ -19,7 +19,12 @@ static WINDOW *meta_sub = NULL;
 
 void init_ui() {
     initscr();
-    scrollok(stdscr, FALSE);
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+    nodelay(stdscr, TRUE);
+    curs_set(0); 
+    
     if (has_colors()) {
         start_color();
         use_default_colors();
@@ -27,10 +32,7 @@ void init_ui() {
         init_pair(2, COLOR_GREEN, -1);
         init_pair(3, 250, -1);
     }
-    curs_set(0); 
-    noecho(); 
-    keypad(stdscr, TRUE); 
-    timeout(20); 
+    DBG("Terminal initialized: %dx%d", COLS, LINES);
 }
 
 static const char* safe_str(const char* s) {
@@ -75,100 +77,125 @@ static void draw_help_text(WINDOW *win, int y, int x) {
     waddstr(win, " Refresh");
 }
 
+static void recreate_ui_components(int max_y, int max_x) {
+    DBG("Reconstructing UI components: %dx%d", max_x, max_y);
+    
+    // Hardware clear to prevent "ghost" characters
+    printf("\033[2J\033[H\033[0m"); 
+    fflush(stdout);
+
+    if (main_panel) { del_panel(main_panel); main_panel = NULL; }
+    if (lyr_sub)    { delwin(lyr_sub);    lyr_sub = NULL; }
+    if (meta_sub)   { delwin(meta_sub);   meta_sub = NULL; }
+    if (main_win)   { delwin(main_win);   main_win = NULL; }
+
+    main_win = newwin(max_y - 2, max_x - 2, 1, 1);
+    main_panel = new_panel(main_win);
+
+    erase();
+    clearok(stdscr, TRUE);
+    refresh();
+}
+
+static void render_metadata_pane(WINDOW *win) {
+    werase(win);
+    wattron(win, COLOR_PAIR(1) | A_BOLD);
+    mvwprintw(win, 0, 0, "  Player:   %s | %s", safe_str(m.player), safe_str(m.status));
+    mvwprintw(win, 1, 0, "  Duration: %s ", m.length_str);
+    wattroff(win, A_BOLD);
+    
+    mvwprintw(win, 2, 0, "  Title:    %s", safe_str(m.title));
+    wattron(win, COLOR_PAIR(2));
+    mvwprintw(win, 3, 0, "  Artist:   %s", safe_str(m.artist));
+    mvwprintw(win, 4, 0, "  Album:    %s", safe_str(m.album));
+    wattroff(win, COLOR_PAIR(2));
+    
+    mvwprintw(win, 5, 0, "  Genre:    %s", safe_str(m.genre));
+    mvwprintw(win, 6, 0, "  Composer: %s", safe_str(m.composer));
+    
+    wattron(win, A_DIM);
+    char disp_url[1024];
+    format_display_url(disp_url, m.file_path, sizeof(disp_url));
+    mvwprintw(win, 7, 0, "  Source:   %s", disp_url);
+    wattroff(win, A_DIM);
+    
+    draw_help_text(win, 10, 0);
+}
+
+static void render_lyrics_pane(WINDOW *win) {
+    werase(win);
+    int h, w;
+    getmaxyx(win, h, w);
+
+    if (m.lyric_count > 0) {
+        wattron(win, COLOR_PAIR(3));
+        for (int i = 0; i < h && i < m.lyric_count; i++) {
+            mvwaddnstr(win, i, 0, m.lyrics[i], w);
+        }
+        wattroff(win, COLOR_PAIR(3));
+    } else {
+        wattron(win, A_DIM);
+        mvwprintw(win, 2, 0, "  (No lyrics found)");
+        wattroff(win, A_DIM);
+    }
+}
+
 void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
-    static char rendered_path_cache[4096] = {0};
-    static char rendered_title_cache[2048] = {0};
-    static int last_x = 0, last_y = 0;
-    static long last_art_render_ms = 0;
-    static bool last_player_state = false;
+    static char last_art_path[4096] = {0};
+    static char last_title_sig[2048] = {0};
+    static int last_w = 0, last_h = 0;
+    static bool last_player_active = false;
 
-    if (resize_pending) {
-        memset(rendered_path_cache, 0, sizeof(rendered_path_cache));
-        memset(rendered_title_cache, 0, sizeof(rendered_title_cache));
-        last_art_render_ms = 0;
-        printf("\033[2J\033[H\033[0m"); 
-        fflush(stdout);
-        clearok(stdscr, TRUE); 
-    }
-
-    char *current_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
+    // --- 1. STATE TRACKING ---
+    char *current_art_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     bool player_active = (m.status[0] != '\0' && strcmp(m.status, "Stopped") != 0);
+    
     char current_title_sig[2048];
     snprintf(current_title_sig, sizeof(current_title_sig), "%s%s", safe_str(m.title), safe_str(m.artist));
-    
-    bool structural_change = (max_x != last_x || max_y != last_y) || resize_pending;
-    bool metadata_change = (strcmp(current_source, rendered_path_cache) != 0) || 
-                           (strcmp(current_title_sig, rendered_title_cache) != 0);
-    bool state_flip = (player_active != last_player_state);
 
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    long now_ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    bool is_resize = (max_x != last_w || max_y != last_h || resize_pending);
+    bool is_new_track = (strcmp(current_art_source, last_art_path) != 0) || 
+                        (strcmp(current_title_sig, last_title_sig) != 0);
+    bool state_flipped = (player_active != last_player_active);
 
-    if (structural_change || state_flip || !main_win) {
+    // --- 2. STRUCTURAL UPDATES ---
+    if (is_resize || state_flipped || !main_win) {
+        // Force refresh by clearing caches
+        memset(last_art_path, 0, sizeof(last_art_path));
+        memset(last_title_sig, 0, sizeof(last_title_sig));
 
-        // 1. Reset caches so art/metadata re-renders immediately
-        memset(rendered_path_cache, 0, sizeof(rendered_path_cache));
-        memset(rendered_title_cache, 0, sizeof(rendered_title_cache));
-        last_art_render_ms = 0;
-
-        // 2. Hardware Clear (Wipes the actual terminal emulator's buffer)
-        // This is the "Ghost Buster" line.
-        printf("\033[2J\033[H\033[0m"); 
-        fflush(stdout);
-
-        // 3. Logic Reset
-        resize_pending = false; 
-        last_x = max_x; last_y = max_y;
-        last_player_state = player_active;
-
-        // 4. Window Reconstruction
-        if (main_panel) { del_panel(main_panel); main_panel = NULL; }
-        if (lyr_sub)    { delwin(lyr_sub);    lyr_sub = NULL; }
-        if (meta_sub)   { delwin(meta_sub);   meta_sub = NULL; }
-        if (main_win)   { delwin(main_win);   main_win = NULL; }
-
-        main_win = newwin(max_y - 2, max_x - 2, 1, 1);
-        main_panel = new_panel(main_win);
+        recreate_ui_components(max_y, max_x);
         
-        // 5. Ncurses Buffer Reset
-        erase(); 
-        clearok(stdscr, TRUE);
-        refresh();
+        last_w = max_x; last_h = max_y;
+        last_player_active = player_active;
+        resize_pending = false;
     }
 
     werase(main_win);
+
     if (!player_active) {
         const char* msg = "Awaiting Player Input...";
-        mvwprintw(main_win, (max_y-2)/2, (max_x-2-strlen(msg))/2, "%s", msg);
-        draw_help_text(main_win, (max_y-2)/2 + 2, (max_x-2-26)/2);
+        mvwprintw(main_win, (max_y - 2) / 2, (max_x - 2 - strlen(msg)) / 2, "%s", msg);
+        draw_help_text(main_win, (max_y - 2) / 2 + 2, (max_x - 2 - 26) / 2);
     } else {
+        // --- 3. LAYOUT CALCULATIONS ---
         int safe_w = max_x - 2;
         int safe_h = max_y - 2;
         bool horizontal = (max_x > 90);
-        
-        // --- HARD LIMITS FOR ULTRAWIDE ---
-        int max_allowed_w = horizontal ? 54 : 50; // Slightly narrower for ultrawide
-        int max_allowed_h = horizontal ? 24 : 22; // Hard cap on height to save metadata space
 
         int art_w = horizontal ? (int)(safe_w * 0.4) : safe_w - 6;
-        if (art_w > max_allowed_w) art_w = max_allowed_w;
+        int max_dim = horizontal ? 54 : 50;
+        if (art_w > max_dim) art_w = max_dim;
+        int art_h = art_w * 0.5;
 
-        int art_h = (int)(art_w * 0.5); 
-        if (art_h > max_allowed_h) art_h = max_allowed_h;
-
-        // Re-derive subwindows
+        // Subwindow setup
         if (!meta_sub || !lyr_sub) {
             if (horizontal) {
-                // Fix: Ensure split doesn't push lyrics too far or metadata too wide
-                int split = art_w + 6; 
-                int meta_w = split - 4;
-                if (meta_w > 60) meta_w = 60; // Cap metadata width
-
-                meta_sub = derwin(main_win, 11, meta_w, art_h + 2, 2);
+                int split = art_w + 6;
+                meta_sub = derwin(main_win, 11, split - 4, art_h + 2, 2);
                 lyr_sub = derwin(main_win, safe_h, safe_w - split - 2, 0, split + 2);
             } else {
                 meta_sub = derwin(main_win, 11, safe_w - 4, art_h + 2, 2);
@@ -176,49 +203,17 @@ void draw_dashboard() {
             }
         }
 
-        // Render Metadata
-        werase(meta_sub);
-        wattron(meta_sub, COLOR_PAIR(1) | A_BOLD);
-        mvwprintw(meta_sub, 0, 0, "  Player:   %s | %s", safe_str(m.player), safe_str(m.status));
-        mvwprintw(meta_sub, 1, 0, "  Duration: %s ", m.length_str);
-        wattroff(meta_sub, A_BOLD);
-        mvwprintw(meta_sub, 2, 0, "  Title:    %s", safe_str(m.title));
-        wattron(meta_sub, COLOR_PAIR(2));
-        mvwprintw(meta_sub, 3, 0, "  Artist:   %s", safe_str(m.artist));
-        mvwprintw(meta_sub, 4, 0, "  Album:    %s", safe_str(m.album));
-        wattroff(meta_sub, COLOR_PAIR(2));
-        mvwprintw(meta_sub, 5, 0, "  Genre:    %s", safe_str(m.genre));
-        mvwprintw(meta_sub, 6, 0, "  Composer: %s", safe_str(m.composer));
-        wattron(meta_sub, A_DIM);
-        char display_url[1024];
-        format_display_url(display_url, m.file_path, sizeof(display_url));
-        mvwprintw(meta_sub, 7, 0, "  Source:   %s", display_url);
-        wattroff(meta_sub, A_DIM);
-        draw_help_text(meta_sub, 10, 0);
+        // --- 4. RENDER PASS ---
+        render_metadata_pane(meta_sub);
+        render_lyrics_pane(lyr_sub);
 
-        // Render Lyrics
-        werase(lyr_sub);
-        if (m.lyric_count > 0) {
-            wattron(lyr_sub, COLOR_PAIR(3));
-            for (int i = 0; i < getmaxy(lyr_sub) && i < m.lyric_count; i++) {
-                mvwaddnstr(lyr_sub, i, 0, m.lyrics[i], getmaxx(lyr_sub));
-            }
-            wattroff(lyr_sub, COLOR_PAIR(3));
-        } else {
-            wattron(lyr_sub, A_DIM);
-            mvwprintw(lyr_sub, 2, 0, "  (No lyrics found)");
-            wattroff(lyr_sub, A_DIM);
-        }
-
-        // 5. THE IMAGE
-        if (player_active && (metadata_change || structural_change || (now_ms - last_art_render_ms > 200))) {
+        if (is_new_track || is_resize) {
             render_art(3, 1, art_w, art_h);
-            last_art_render_ms = now_ms;
-            strncpy(rendered_path_cache, current_source, sizeof(rendered_path_cache) - 1);
+            strncpy(last_art_path, current_art_source, sizeof(last_art_path) - 1);
         }
     }
 
-    strncpy(rendered_title_cache, current_title_sig, sizeof(rendered_title_cache) - 1);
+    strncpy(last_title_sig, current_title_sig, sizeof(last_title_sig) - 1);
     update_panels();
     doupdate();
 }
