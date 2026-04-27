@@ -7,16 +7,24 @@ Yet another media status indicator/screensaver.
 ## Features
 
 - CJK/Unicode Support (`ncursesw`)
-- Currently Playing Media
+- Currently Playing Media (`playerctl`)
   - Metadata (Media name/title/etc.)
   - ASCII art (extracted from audio file/URL)
   - Lyrics (if available)
+  - Play/Pause Next/Previous
 - Refresh Button (if auto-refresh/polling does not work)
+
+## Planned
+
+- Fallback ASCII art alignment/rendering
+- Fix help text rendering in non-fallback mode
+- Rendering for smaller screens?
 
 ## Known Issues
 
+Needs programme restart.
 - TUI does not dynamically resize when window size is changed at runtime.
-Refresh button does not help for this.
+- Fallback mode check not triggered by refresh hotkey.
 
 ## Tested Media Players
 

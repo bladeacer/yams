@@ -82,11 +82,17 @@ static void handle_keypress(int ch) {
         case 'l':
         case KEY_LEFT:     cmd = "playerctl previous &";   break;
         case 'r':
-        case KEY_RESIZE:   resize_pending = true;          break;
+        case KEY_RESIZE:       
+            if (system("playerctl -l >/dev/null 2>&1") != 0) {
+                clear_metadata();
+            }
+            resize_pending = true; 
+            break;
     }
 
     if (cmd) {
         system(cmd);
+        usleep(50000);
         resize_pending = true;
     }
 }
@@ -128,39 +134,47 @@ int main() {
 
         if (activity < 0 && errno != EINTR) break;
 
-        if (FD_ISSET(pipe_fd, &fds)) {
-            char chunk[8192];
-            ssize_t n = read(pipe_fd, chunk, sizeof(chunk) - 1);
-            
-            if (n > 0) {
-                chunk[n] = '\0';
-                if (buf_idx + n < BUFFER_SIZE) {
-                    memcpy(poll_buffer + buf_idx, chunk, n);
-                    buf_idx += n;
-                    poll_buffer[buf_idx] = '\0';
-                    process_metadata_stream();
-                }
-            } else if (n == 0) {
-                DBG("Pipe closed. Clearing metadata and reverting to fallback.");
-                
-                pclose(player_pipe);
-                clear_metadata();
-                draw_dashboard();
+        while (1) {
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(STDIN_FILENO, &fds);
+            FD_SET(pipe_fd, &fds);
 
-                player_pipe = popen(cmd, "r");
-                pipe_fd = fileno(player_pipe);
-            }
-        } else if (activity == 0) {
-            static long last_check = 0;
-            long now = get_ms();
-            if (now - last_check > 2000) { // Check every 2 seconds
-                if (system("playerctl -l >/dev/null 2>&1") != 0) {
-                    if (m.status[0] != '\0') { // Was active, now gone
-                        clear_metadata();
-                        draw_dashboard();
+            struct timeval tv = {0, 100000}; 
+            int activity = select(pipe_fd + 1, &fds, NULL, NULL, &tv);
+
+            if (activity < 0 && errno != EINTR) break;
+
+            if (FD_ISSET(pipe_fd, &fds)) {
+                char chunk[8192];
+                ssize_t n = read(pipe_fd, chunk, sizeof(chunk) - 1);
+
+                if (n > 0) {
+                    chunk[n] = '\0';
+                    if (buf_idx + n < BUFFER_SIZE) {
+                        memcpy(poll_buffer + buf_idx, chunk, n);
+                        buf_idx += n;
+                        poll_buffer[buf_idx] = '\0';
+                        process_metadata_stream();
                     }
+                } else if (n <= 0) {
+                    DBG("Pipe closed. Clearing metadata and reverting to fallback.");
+                    pclose(player_pipe);
+                    clear_metadata();
+                    draw_dashboard();
+
+                    player_pipe = popen(cmd, "r");
+                    pipe_fd = fileno(player_pipe);
                 }
-                last_check = now;
+            }
+
+            if (FD_ISSET(STDIN_FILENO, &fds)) {
+                handle_keypress(getch());
+            }
+
+            if (resize_pending) {
+                draw_dashboard();
+                resize_pending = false;
             }
         }
 

@@ -65,7 +65,7 @@ static void format_display_url(char *dest, const char *src, size_t size) {
     }
 }
 
-static void draw_help_text(WINDOW *win, int y, int x) {
+static void draw_help_text(WINDOW *win, int y, int x, bool fallback) {
     int cur_y = y;
     int cur_x = x;
 
@@ -77,14 +77,26 @@ static void draw_help_text(WINDOW *win, int y, int x) {
         cur_x = getcurx(win); \
     }
 
-    DRAW_KEY("q", "Quit");
-    DRAW_KEY("r", "Refresh");
-    
-    cur_y++; cur_x = x;
-    DRAW_KEY("SPC", "Play/Pause");
-    cur_y++; cur_x = x;
-    DRAW_KEY("h/L-Arrow", "Prev");
-    DRAW_KEY("l/R-Arrow", "Next");
+    if (fallback) {
+        // Compact view for fallback screen
+        DRAW_KEY("q", "Quit");
+        DRAW_KEY("r", "Refresh");
+    } else {
+        // Multi-line view for active media
+        DRAW_KEY("q", "Quit");
+        DRAW_KEY("r", "Refresh");
+        
+        cur_y++; cur_x = x;
+        DRAW_KEY("SPC", "Play/Pause");
+        
+        cur_y++; cur_x = x;
+        DRAW_KEY("h", "Prev");
+        DRAW_KEY("l", "Next");
+        
+        wattron(win, A_DIM);
+        waddstr(win, " (Arrows supported)");
+        wattroff(win, A_DIM);
+    }
 }
 
 static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
@@ -100,7 +112,7 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
         "   |_|/_/   \\_\\_||_|  |_||____/ "
     };
     for(int i = 0; i < 5; i++) {
-        mvwprintw(win, mid_y - 6 + i, mid_x - 15, "%s", logo[i]);
+        mvwprintw(win, mid_y - 6 + i, mid_x - 16, "%s", logo[i]);
     }
     wattroff(win, COLOR_PAIR(1) | A_BOLD);
 
@@ -111,10 +123,11 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
 
     wattron(win, A_DIM);
     const char* repo = "https://codeberg.org/bladeacer/yams";
+
     mvwprintw(win, mid_y + 1, mid_x - (strlen(repo)/2), "%s", repo);
     wattroff(win, A_DIM);
 
-    draw_help_text(win, mid_y + 4, mid_x - 20);
+    draw_help_text(win, mid_y + 4, mid_x - 10, true);
 }
 
 
@@ -161,7 +174,7 @@ static void render_metadata_pane(WINDOW *win) {
     mvwprintw(win, 7, 0, "  Source:   %s", disp_url);
     wattroff(win, A_DIM);
     
-    draw_help_text(win, 10, 0);
+    draw_help_text(win, 10, 0, false);
 
     wnoutrefresh(win);
 }
