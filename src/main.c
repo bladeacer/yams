@@ -15,8 +15,8 @@ FILE *log_file = NULL;
 long last_poll_time = 0;
 FILE *player_pipe = NULL;
 long last_resize_time = 0;
-#define POLL_INTERVAL_MS 500  // Poll playerctl every 500ms
-#define BUFFER_SIZE 262144
+#define POLL_INTERVAL_MS 500  
+#define BUFFER_SIZE 262144 // 256KB is plenty for text-first parsing
 
 void handle_exit(int sig) {
     if (player_pipe) pclose(player_pipe);
@@ -43,21 +43,33 @@ int main() {
         fflush(log_file);
     }
 
-    DBG("CHECKPOINT: Starting Signal Setup");
     signal(SIGINT, handle_exit);
     signal(SIGTERM, handle_exit);
     signal(SIGWINCH, handle_winch);
 
-    DBG("CHECKPOINT: Starting init_ui()");
     init_ui();
-    DBG("CHECKPOINT: init_ui() Success");
 
-    const char *fmt = "TITLE|{{xesam:title}}¶ARTIST|{{xesam:artist}}¶ALBUM|{{xesam:album}}¶PATH|{{xesam:url}}¶ART|{{mpris:artUrl}}¶PLAYER|{{playerName}}¶STATUS|{{status}}¶LYRICS|{{xesam:asText}}¶LENGTH|{{mpris:length}}¶GENRE|{{xesam:genre}}¶COMPOSER|{{xesam:composer}}¶[[END]]¶";
+    /* * IMPROVED FORMAT STRING:
+     * We put PLAYER and STATUS first. If ART is a massive base64 string 
+     * that exceeds our buffer, we will still have captured the 
+     * critical identity of the track before the buffer truncates.
+     */
+    const char *fmt = "PLAYER|{{playerName}}¶"
+                      "STATUS|{{status}}¶"
+                      "TITLE|{{xesam:title}}¶"
+                      "ARTIST|{{xesam:artist}}¶"
+                      "ALBUM|{{xesam:album}}¶"
+                      "PATH|{{xesam:url}}¶"
+                      "LENGTH|{{mpris:length}}¶"
+                      "GENRE|{{xesam:genre}}¶"
+                      "COMPOSER|{{xesam:composer}}¶"
+                      "ART|{{mpris:artUrl}}¶"
+                      "LYRICS|{{xesam:asText}}¶[[END]]¶";
+
     char cmd[4096];
     snprintf(cmd, sizeof(cmd), "playerctl metadata --format '%s' 2>/dev/null", fmt);
 
     char poll_buffer[BUFFER_SIZE];
-    DBG("CHECKPOINT: Entering Main Loop");
     
     while (1) {
         int ch = getch();
@@ -65,7 +77,7 @@ int main() {
 
         if (ch != ERR) {
             switch(ch) {
-                case 'q': cleanup_ui(0); break;
+                case 'q': handle_exit(0); break;
                 case 'j': case KEY_DOWN:
                           if (scroll_pos < m.lyric_count - 1) scroll_pos++;
                           should_draw = true; 
@@ -74,12 +86,8 @@ int main() {
                           if (scroll_pos > 0) scroll_pos--;
                           should_draw = true; 
                           break;
-                case KEY_RESIZE:
-                          resize_pending = true;
-                          resizeterm(0, 0);
-                          should_draw = true;
-                          break;
                 case 'r':
+                case KEY_RESIZE:
                           resize_pending = true;
                           should_draw = true;
                           break;
@@ -93,31 +101,34 @@ int main() {
             FILE *fp = popen(cmd, "r");
             if (fp) {
                 memset(poll_buffer, 0, BUFFER_SIZE);
+                
+                // 1. Read the first 256KB (the "Good Stuff")
                 size_t read_bytes = fread(poll_buffer, 1, BUFFER_SIZE - 1, fp);
+                
+                // 2. GHOST BUSTER: Drain the remaining pipe.
+                // If mpv sent a 2MB base64 string, we MUST read it all out
+                // or the next popen() might get desynced/stale data.
+                char junk[8192];
+                while (fread(junk, 1, sizeof(junk), fp) > 0);
+                
                 pclose(fp);
 
                 if (read_bytes > 0) {
                     parse_block(poll_buffer);
                 } else {
-                    // CRITICAL: Clear metadata if playerctl returns nothing
-                    memset(&m, 0, sizeof(m)); 
+                    // Only clear if playerctl actually fails/finds no players
+                    clear_metadata();
                 }
-                // ALWAYS trigger a draw after a poll, even if empty
                 should_draw = true; 
             }
         }
 
         if (should_draw) {
             draw_dashboard(); 
-            if (resize_pending) {
-                usleep(30000); 
-                draw_dashboard();
-            }
         }
 
         usleep(10000); 
     }
 
-    handle_exit(0); 
     return 0;
 }

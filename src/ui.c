@@ -50,7 +50,10 @@ static void render_art(int x, int y, int w, int h) {
     if (!input_url || strlen(input_url) < 5) return;
 
     char decoded_path[4096];
-    char *raw_path = (strncmp(input_url, "file://", 7) == 0) ? input_url + 7 : input_url;
+    const char *raw_path = input_url;
+    if (strncmp(input_url, "file://", 7) == 0) {
+        raw_path = input_url + 7;
+    }
     url_decode(decoded_path, raw_path);
     char *safe_path = sh_escape(decoded_path);
     char cmd[16384];

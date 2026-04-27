@@ -7,6 +7,8 @@ Should work with media players detectable by `playerctl`.
 ## Tested Media Players
 
 - Tauon
+- Firefox based Browser
+- mpv (requires mpv-mpris)
 
 ## Requirements
 

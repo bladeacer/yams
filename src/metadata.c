@@ -30,7 +30,19 @@ void parse_block(char *block) {
         else if (strncmp(token, "STATUS|", 7) == 0) strncpy(m.status, token + 7, 31);
         else if (strncmp(token, "PLAYER|", 7) == 0) strncpy(m.player, token + 7, 63);
         else if (strncmp(token, "PATH|", 5) == 0) strncpy(m.file_path, token + 5, 4095);
-        else if (strncmp(token, "ART|", 4) == 0) strncpy(m.art_url, token + 4, 4095);
+        else if (strncmp(token, "ART|", 4) == 0) {
+            char *art_val = token + 4;
+            // CHECK FOR BASE64 GHOSTING:
+            // If it starts with "data:image", it's a massive binary blob.
+            // We set it to empty so the UI falls back to file_path.
+            if (strncmp(art_val, "data:image", 10) == 0) {
+                m.art_url[0] = '\0';
+                DBG("MPV Base64 art detected - bypassing to prevent overflow.");
+            } else {
+                strncpy(m.art_url, art_val, 4095);
+            }
+        }
+
         else if (strncmp(token, "GENRE|", 6) == 0) strncpy(m.genre, token + 6, 511);
         else if (strncmp(token, "COMPOSER|", 9) == 0) strncpy(m.composer, token + 9, 1023);
         else if (strncmp(token, "LENGTH|", 7) == 0) {
