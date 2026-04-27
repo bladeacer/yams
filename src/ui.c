@@ -182,17 +182,32 @@ void draw_dashboard() {
         mvwprintw(meta_sub, 3, 0, "Album:  %.*s", mw-8, safe_str(m.album));
         wattroff(meta_sub, COLOR_PAIR(2));
 
+        if (metadata_change) {
+            scroll_pos = 0;
+        }
+
         werase(lyr_sub);
         wattron(lyr_sub, COLOR_PAIR(3));
-        for (int i = 0; i < lh && i < m.lyric_count; i++) {
-            if (m.lyrics[i]) mvwaddnstr(lyr_sub, i, 0, m.lyrics[i], lw);
+
+        if (m.lyric_count > 0) {
+            for (int i = 0; i < lh; i++) {
+                int lyric_idx = i + scroll_pos;
+                if (lyric_idx >= 0 && lyric_idx < m.lyric_count) {
+                    if (m.lyrics[lyric_idx]) {
+                        wmove(lyr_sub, i, 0);
+                        wclrtoeol(lyr_sub); 
+                        mvwaddnstr(lyr_sub, i, 0, m.lyrics[lyric_idx], lw);
+                    }
+                }
+            }
+        } else {
+            mvwprintw(lyr_sub, 0, 0, " (No lyrics detected) ");
         }
         wattroff(lyr_sub, COLOR_PAIR(3));
 
         update_panels();
         doupdate();
 
-        // 2. Throttled Image Render (Only the heavy part is delayed)
         if (player_active) {
             // If it's a new song, we want to render ASAP, but if we just rendered 
             // 50ms ago (from a resize), we wait.

@@ -67,11 +67,11 @@ int main() {
             switch(ch) {
                 case 'q': cleanup_ui(0); break;
                 case 'j': case KEY_DOWN:
-                          scroll_pos++;
+                          if (scroll_pos < m.lyric_count - 1) scroll_pos++;
                           should_draw = true; 
                           break;
                 case 'k': case KEY_UP:
-                          scroll_pos--;
+                          if (scroll_pos > 0) scroll_pos--;
                           should_draw = true; 
                           break;
                 case KEY_RESIZE:
