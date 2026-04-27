@@ -27,7 +27,8 @@ Refresh button does not help for this.
 
 - Firefox-based browser(s)
 
-Should work with media players detectable by `playerctl` via `mpris`.
+Should work with media players detectable by `playerctl` or those that implement
+`mpris`.
 
 > PRs welcome to add tested media player entries.
 
@@ -35,13 +36,14 @@ Should work with media players detectable by `playerctl` via `mpris`.
 
 ### Core Dependencies
 
+Built on the shoulders of giants.
+
 - ncurses (TUI)
-- playerctl (Get media playing status)
+- [playerctl](https://github.com/altdesktop/playerctl)
 - ffmpeg (Extract image thumbnail from audio file)
 - imagemagick (Convert to WEBP, used so jp2a handles image scaling better)
 - jp2a (JPG/WEBP to ASCII)
 - sed (Regex replace)
-- timeout (Time limit image rendering)
 
 ### Dev Dependencies
 
