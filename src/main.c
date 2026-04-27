@@ -89,21 +89,17 @@ int main() {
             last_poll_time = now;
 
             FILE *fp = popen(cmd, "r");
-            if (!fp) {
-                DBG("UI_ERROR: popen failed for cmd: %s", cmd);
-            } else {
-                // Read the entire output (multiline)
+            if (fp) {
+                memset(poll_buffer, 0, BUFFER_SIZE); // Clear before use
                 size_t read_bytes = fread(poll_buffer, 1, BUFFER_SIZE - 1, fp);
+                pclose(fp); // Close immediately after reading
+
                 if (read_bytes > 0) {
-                    poll_buffer[read_bytes] = '\0';
                     parse_block(poll_buffer);
                     should_draw = true;
-                } else {
-                    DBG("POLL: No data received");
-                    clear_metadata();
-                    should_draw = true;
                 }
-                pclose(fp);
+            } else {
+                DBG("UI_ERROR: popen failed for cmd: %s", cmd);
             }
         }
 
