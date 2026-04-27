@@ -10,7 +10,6 @@
 #include "debug.h"
 
 bool resize_pending = false;
-int scroll_pos = 0; 
 
 static WINDOW *main_win = NULL;
 static PANEL  *main_panel = NULL;
@@ -244,12 +243,11 @@ void draw_dashboard() {
         draw_help_text(meta_sub, 9, 0);
 
         // Render Lyrics
-        if (metadata_change) scroll_pos = 0;
         werase(lyr_sub);
         if (m.lyric_count > 0) {
             wattron(lyr_sub, COLOR_PAIR(3));
-            for (int i = 0; i < getmaxy(lyr_sub) && (i + scroll_pos) < m.lyric_count; i++) {
-                mvwaddnstr(lyr_sub, i, 0, m.lyrics[i + scroll_pos], getmaxx(lyr_sub));
+            for (int i = 0; i < getmaxy(lyr_sub) && i < m.lyric_count; i++) {
+                mvwaddnstr(lyr_sub, i, 0, m.lyrics[i], getmaxx(lyr_sub));
             }
             wattroff(lyr_sub, COLOR_PAIR(3));
         } else {

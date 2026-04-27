@@ -78,14 +78,6 @@ int main() {
         if (ch != ERR) {
             switch(ch) {
                 case 'q': handle_exit(0); break;
-                case 'j': case KEY_DOWN:
-                          if (scroll_pos < m.lyric_count - 1) scroll_pos++;
-                          should_draw = true; 
-                          break;
-                case 'k': case KEY_UP:
-                          if (scroll_pos > 0) scroll_pos--;
-                          should_draw = true; 
-                          break;
                 case 'r':
                 case KEY_RESIZE:
                           resize_pending = true;
