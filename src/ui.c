@@ -108,6 +108,18 @@ static void format_display_url(char *dest, const char *src, size_t size) {
     }
 }
 
+// Move help text to a helper so it's consistent
+static void draw_help_text(WINDOW *win, int y, int x) {
+    wattron(win, A_REVERSE | A_BOLD);
+    mvwprintw(win, y, x, " q "); 
+    wattroff(win, A_REVERSE | A_BOLD);
+    waddstr(win, " Quit  ");
+    wattron(win, A_REVERSE | A_BOLD);
+    waddstr(win, " r ");
+    wattroff(win, A_REVERSE | A_BOLD);
+    waddstr(win, " Refresh");
+}
+
 void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -117,6 +129,19 @@ void draw_dashboard() {
     static int last_x = 0, last_y = 0;
     static long last_art_render_ms = 0;
     static bool last_player_state = false;
+
+    // --- NUCLEAR RESET ON REFRESH ---
+    if (resize_pending) {
+        // 1. Wipe caches
+        memset(rendered_path_cache, 0, sizeof(rendered_path_cache));
+        memset(rendered_title_cache, 0, sizeof(rendered_title_cache));
+        last_art_render_ms = 0;
+
+        // 2. Clear hardware terminal and reset ncurses internal state
+        printf("\033[2J\033[H\033[0m"); // Clear screen, cursor to home, reset attributes
+        fflush(stdout);
+        clearok(stdscr, TRUE); // Force ncurses to repaint every single pixel
+    }
 
     char *current_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     bool player_active = (m.status[0] != '\0' && strcmp(m.status, "Stopped") != 0);
@@ -134,32 +159,32 @@ void draw_dashboard() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     long now_ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 
-    // 1. REBUILD WINDOWS
+    // 3. COMPLETE LAYOUT RECONSTRUCTION
     if (structural_change || state_flip || !main_win) {
-        resize_pending = false;
+        resize_pending = false; 
         last_x = max_x; last_y = max_y;
         last_player_state = player_active;
         
-        // CRITICAL: Order of deletion and NULLing pointers
+        // Delete everything in reverse order of creation
         if (main_panel) { del_panel(main_panel); main_panel = NULL; }
         if (lyr_sub)    { delwin(lyr_sub);    lyr_sub = NULL; }
         if (meta_sub)   { delwin(meta_sub);   meta_sub = NULL; }
         if (main_win)   { delwin(main_win);   main_win = NULL; }
 
+        // Fresh allocation
         main_win = newwin(max_y - 2, max_x - 2, 1, 1);
         main_panel = new_panel(main_win);
         
-        printf("\033[2J\033[H"); 
-        fflush(stdout);
+        // Sync ncurses with the new reality
         erase();
+        refresh();
     }
 
     werase(main_win);
     if (!player_active) {
         const char* msg = "Awaiting Player Input...";
         mvwprintw(main_win, (max_y-2)/2, (max_x-2-strlen(msg))/2, "%s", msg);
-        mvwprintw(main_win, (max_y-2)/2 + 2, (max_x-2-26)/2, "[q] Quit  |  [r] Refresh");
-        memset(rendered_path_cache, 0, sizeof(rendered_path_cache));
+        draw_help_text(main_win, (max_y-2)/2 + 2, (max_x-2-26)/2);
     } else {
         int safe_w = max_x - 2;
         int safe_h = max_y - 2;
@@ -167,7 +192,7 @@ void draw_dashboard() {
         int art_w = horizontal ? (int)(safe_w * 0.45) : safe_w - 6;
         int art_h = (int)(art_w * 0.5);
 
-        // Re-derive subwindows if NULL
+        // Always re-derive subwindows if they were wiped in step 3
         if (!meta_sub || !lyr_sub) {
             if (horizontal) {
                 int split = art_w + 4;
@@ -175,11 +200,11 @@ void draw_dashboard() {
                 lyr_sub = derwin(main_win, safe_h, safe_w - split - 2, 0, split + 2);
             } else {
                 meta_sub = derwin(main_win, 11, safe_w - 4, art_h + 1, 2);
-                lyr_sub = derwin(main_win, safe_h - art_h - 13, safe_w - 4, art_h + 12, 2);
+                lyr_sub = derwin(main_win, safe_h - art_h - 14, safe_w - 4, art_h + 13, 2);
             }
         }
 
-        // Draw Metadata
+        // Render Metadata content
         werase(meta_sub);
         wattron(meta_sub, COLOR_PAIR(1) | A_BOLD);
         mvwprintw(meta_sub, 0, 0, "● %s [%s]", safe_str(m.status), m.length_str);
@@ -197,20 +222,12 @@ void draw_dashboard() {
         wattron(meta_sub, A_DIM);
         char display_url[1024];
         format_display_url(display_url, m.file_path, sizeof(display_url));
-        mvwprintw(meta_sub, 7, 0, "Source: %s", display_url);
+        mvwprintw(meta_sub, 6, 0, "Source:   %s", display_url);
         wattroff(meta_sub, A_DIM);
 
-        // Controls
-        wattron(meta_sub, A_REVERSE | A_BOLD);
-        mvwprintw(meta_sub, 9, 0, " q "); 
-        wattroff(meta_sub, A_REVERSE | A_BOLD);
-        waddstr(meta_sub, " Quit  ");
-        wattron(meta_sub, A_REVERSE | A_BOLD);
-        mvwprintw(meta_sub, 9, 10, " r ");
-        wattroff(meta_sub, A_REVERSE | A_BOLD);
-        waddstr(meta_sub, " Refresh");
+        draw_help_text(meta_sub, 9, 0);
 
-        // Lyrics
+        // Render Lyrics content
         if (metadata_change) scroll_pos = 0;
         werase(lyr_sub);
         if (m.lyric_count > 0) {
@@ -226,11 +243,14 @@ void draw_dashboard() {
         }
     }
 
+    // Cache current state
     strncpy(rendered_title_cache, current_title_sig, sizeof(rendered_title_cache) - 1);
-    touchwin(stdscr);
+    
+    // 4. THE PUSH
     update_panels();
     doupdate();
 
+    // 5. THE IMAGE (Always last, drawn on top)
     if (player_active && strlen(current_source) > 5) {
         if (metadata_change || structural_change || (now_ms - last_art_render_ms > 200)) {
             int art_w = (max_x > 90) ? (int)((max_x - 2) * 0.45) : (max_x - 8);
