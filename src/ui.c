@@ -226,21 +226,22 @@ void draw_dashboard() {
         // Render Metadata
         werase(meta_sub);
         wattron(meta_sub, COLOR_PAIR(1) | A_BOLD);
-        mvwprintw(meta_sub, 0, 0, "\u25CF %s   [%s]", safe_str(m.status), m.length_str);
+        mvwprintw(meta_sub, 0, 0, "  Player:   %s | %s", safe_str(m.player), safe_str(m.status));
+        mvwprintw(meta_sub, 1, 0, "  Duration: %s ", m.length_str);
         wattroff(meta_sub, A_BOLD);
-        mvwprintw(meta_sub, 1, 0, "  Title:    %s", safe_str(m.title));
+        mvwprintw(meta_sub, 2, 0, "  Title:    %s", safe_str(m.title));
         wattron(meta_sub, COLOR_PAIR(2));
-        mvwprintw(meta_sub, 2, 0, "  Artist:   %s", safe_str(m.artist));
-        mvwprintw(meta_sub, 3, 0, "  Album:    %s", safe_str(m.album));
+        mvwprintw(meta_sub, 3, 0, "  Artist:   %s", safe_str(m.artist));
+        mvwprintw(meta_sub, 4, 0, "  Album:    %s", safe_str(m.album));
         wattroff(meta_sub, COLOR_PAIR(2));
-        mvwprintw(meta_sub, 4, 0, "  Genre:    %s", safe_str(m.genre));
-        mvwprintw(meta_sub, 5, 0, "  Composer: %s", safe_str(m.composer));
+        mvwprintw(meta_sub, 5, 0, "  Genre:    %s", safe_str(m.genre));
+        mvwprintw(meta_sub, 6, 0, "  Composer: %s", safe_str(m.composer));
         wattron(meta_sub, A_DIM);
         char display_url[1024];
         format_display_url(display_url, m.file_path, sizeof(display_url));
-        mvwprintw(meta_sub, 6, 0, "  Source:   %s", display_url);
+        mvwprintw(meta_sub, 7, 0, "  Source:   %s", display_url);
         wattroff(meta_sub, A_DIM);
-        draw_help_text(meta_sub, 9, 0);
+        draw_help_text(meta_sub, 10, 0);
 
         // Render Lyrics
         werase(lyr_sub);
