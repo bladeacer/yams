@@ -80,7 +80,6 @@ static void draw_help_text(WINDOW *win, int y, int x) {
 static void recreate_ui_components(int max_y, int max_x) {
     DBG("Reconstructing UI components: %dx%d", max_x, max_y);
     
-    // Hardware clear to prevent "ghost" characters
     printf("\033[2J\033[H\033[0m"); 
     fflush(stdout);
 
@@ -98,7 +97,9 @@ static void recreate_ui_components(int max_y, int max_x) {
 }
 
 static void render_metadata_pane(WINDOW *win) {
+    if (!win) return;
     werase(win);
+
     wattron(win, COLOR_PAIR(1) | A_BOLD);
     mvwprintw(win, 0, 0, "  Player:   %s | %s", safe_str(m.player), safe_str(m.status));
     mvwprintw(win, 1, 0, "  Duration: %s ", m.length_str);
@@ -120,6 +121,8 @@ static void render_metadata_pane(WINDOW *win) {
     wattroff(win, A_DIM);
     
     draw_help_text(win, 10, 0);
+
+    wnoutrefresh(win);
 }
 
 static void render_lyrics_pane(WINDOW *win) {
@@ -161,18 +164,22 @@ void draw_dashboard() {
                         (strcmp(current_title_sig, last_title_sig) != 0);
     bool state_flipped = (player_active != last_player_active);
 
-    // --- 2. STRUCTURAL UPDATES ---
-    if (is_resize || state_flipped || !main_win) {
-        // Force refresh by clearing caches
-        memset(last_art_path, 0, sizeof(last_art_path));
-        memset(last_title_sig, 0, sizeof(last_title_sig));
+    if (is_new_track) {
+        DBG("New Track Detected: %s vs %s", current_title_sig, last_title_sig);
+    }
 
+    if (is_resize || state_flipped || !main_win) {
         recreate_ui_components(max_y, max_x);
+        last_art_path[0] = '\0';
+        last_title_sig[0] = '\0';
         
-        last_w = max_x; last_h = max_y;
+        last_w = max_x; 
+        last_h = max_y;
         last_player_active = player_active;
         resize_pending = false;
     }
+
+    erase();
 
     werase(main_win);
 
@@ -208,12 +215,14 @@ void draw_dashboard() {
         render_lyrics_pane(lyr_sub);
 
         if (is_new_track || is_resize) {
+            DBG("Redrawing Art: %s", current_art_source);
             render_art(3, 1, art_w, art_h);
+            
             strncpy(last_art_path, current_art_source, sizeof(last_art_path) - 1);
+            strncpy(last_title_sig, current_title_sig, sizeof(last_title_sig) - 1);
         }
     }
 
-    strncpy(last_title_sig, current_title_sig, sizeof(last_title_sig) - 1);
     update_panels();
     doupdate();
 }
