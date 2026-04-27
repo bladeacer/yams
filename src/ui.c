@@ -154,16 +154,34 @@ void draw_dashboard() {
     long now_ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 
     if (structural_change || state_flip || !main_win) {
+
+        // 1. Reset caches so art/metadata re-renders immediately
+        memset(rendered_path_cache, 0, sizeof(rendered_path_cache));
+        memset(rendered_title_cache, 0, sizeof(rendered_title_cache));
+        last_art_render_ms = 0;
+
+        // 2. Hardware Clear (Wipes the actual terminal emulator's buffer)
+        // This is the "Ghost Buster" line.
+        printf("\033[2J\033[H\033[0m"); 
+        fflush(stdout);
+
+        // 3. Logic Reset
         resize_pending = false; 
         last_x = max_x; last_y = max_y;
         last_player_state = player_active;
+
+        // 4. Window Reconstruction
         if (main_panel) { del_panel(main_panel); main_panel = NULL; }
         if (lyr_sub)    { delwin(lyr_sub);    lyr_sub = NULL; }
         if (meta_sub)   { delwin(meta_sub);   meta_sub = NULL; }
         if (main_win)   { delwin(main_win);   main_win = NULL; }
+
         main_win = newwin(max_y - 2, max_x - 2, 1, 1);
         main_panel = new_panel(main_win);
-        erase();
+        
+        // 5. Ncurses Buffer Reset
+        erase(); 
+        clearok(stdscr, TRUE);
         refresh();
     }
 
