@@ -65,7 +65,6 @@ static void format_display_url(char *dest, const char *src, size_t size) {
     }
 }
 
-// Move help text to a helper so it's consistent
 static void draw_help_text(WINDOW *win, int y, int x) {
     wattron(win, A_REVERSE | A_BOLD);
     mvwprintw(win, y, x, " q "); 
@@ -152,7 +151,6 @@ void draw_dashboard() {
     static int last_w = 0, last_h = 0;
     static bool last_player_active = false;
 
-    // --- 1. STATE TRACKING ---
     char *current_art_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     bool player_active = (m.status[0] != '\0' && strcmp(m.status, "Stopped") != 0);
     
@@ -164,14 +162,14 @@ void draw_dashboard() {
                         (strcmp(current_title_sig, last_title_sig) != 0);
     bool state_flipped = (player_active != last_player_active);
 
-    if (is_new_track) {
-        DBG("New Track Detected: %s vs %s", current_title_sig, last_title_sig);
-    }
-
     if (is_resize || state_flipped || !main_win) {
         recreate_ui_components(max_y, max_x);
+        
         last_art_path[0] = '\0';
         last_title_sig[0] = '\0';
+
+        extern bool force_art_redraw; 
+        force_art_redraw = true;
         
         last_w = max_x; 
         last_h = max_y;
@@ -179,16 +177,14 @@ void draw_dashboard() {
         resize_pending = false;
     }
 
-    erase();
-
-    werase(main_win);
+    erase(); 
+    if (main_win) werase(main_win);
 
     if (!player_active) {
         const char* msg = "Awaiting Player Input...";
         mvwprintw(main_win, (max_y - 2) / 2, (max_x - 2 - strlen(msg)) / 2, "%s", msg);
         draw_help_text(main_win, (max_y - 2) / 2 + 2, (max_x - 2 - 26) / 2);
     } else {
-        // --- 3. LAYOUT CALCULATIONS ---
         int safe_w = max_x - 2;
         int safe_h = max_y - 2;
         bool horizontal = (max_x > 90);
@@ -198,7 +194,6 @@ void draw_dashboard() {
         if (art_w > max_dim) art_w = max_dim;
         int art_h = art_w * 0.5;
 
-        // Subwindow setup
         if (!meta_sub || !lyr_sub) {
             if (horizontal) {
                 int split = art_w + 6;
@@ -210,12 +205,15 @@ void draw_dashboard() {
             }
         }
 
-        // --- 4. RENDER PASS ---
         render_metadata_pane(meta_sub);
         render_lyrics_pane(lyr_sub);
 
+        update_panels();
+        doupdate();
+
         if (is_new_track || is_resize) {
             DBG("Redrawing Art: %s", current_art_source);
+            
             render_art(3, 1, art_w, art_h);
             
             strncpy(last_art_path, current_art_source, sizeof(last_art_path) - 1);

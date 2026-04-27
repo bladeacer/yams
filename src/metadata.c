@@ -16,8 +16,7 @@ void clear_metadata() {
 }
 
 void parse_block(char *block) {
-    memset(&m, 0, sizeof(m));
-    m.title[0] = m.artist[0] = m.album[0] = m.genre[0] = m.composer[0] = '\0';
+    clear_metadata();
 
     char *current = block;
     char *next_sep;
@@ -34,10 +33,13 @@ void parse_block(char *block) {
         else if (strncmp(token, "ARTIST|", 7) == 0) strncpy(m.artist, token + 7, 511);
         else if (strncmp(token, "ALBUM|", 6) == 0) strncpy(m.album, token + 6, 511);
         else if (strncmp(token, "STATUS|", 7) == 0) strncpy(m.status, token + 7, 31);
-        else if (strncmp(token, "PLAYER|", 7) == 0) strncpy(m.player, token + 7, 63);
         else if (strncmp(token, "PATH|", 5) == 0) strncpy(m.file_path, token + 5, 4095);
         else if (strncmp(token, "GENRE|", 6) == 0) strncpy(m.genre, token + 6, 511);
         else if (strncmp(token, "COMPOSER|", 9) == 0) strncpy(m.composer, token + 9, 1023);
+        if (strncmp(token, "PLAYER|", 7) == 0) {
+            strncpy(m.player, token + 7, sizeof(m.player) - 1);
+            m.player[sizeof(m.player) - 1] = '\0';
+        }
         else if (strncmp(token, "ART|", 4) == 0) {
             char *art_val = token + 4;
             if (strncmp(art_val, "data:image", 10) == 0) {

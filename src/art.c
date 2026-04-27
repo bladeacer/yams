@@ -8,15 +8,17 @@
 #include "debug.h"
 
 static char last_rendered_path[4096] = {0};
+bool force_art_redraw = false;
 
 void render_art(int x, int y, int w, int h) {
     char *input_url = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     if (!input_url || strlen(input_url) < 5) return;
 
     static int last_w = 0;
-    if (strcmp(input_url, last_rendered_path) == 0 && w == last_w) {
+    if (!force_art_redraw && strcmp(input_url, last_rendered_path) == 0 && w == last_w) {
         return; 
     }
+    force_art_redraw = false;
     last_w = w;
 
     char decoded_path[4096];
