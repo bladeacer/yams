@@ -6,6 +6,9 @@
 
 extern FILE *log_file;
 
+#ifdef NDEBUG
+#define DBG(...) ((void)0)
+#else
 #define DBG(...) \
     do { \
         if (log_file) { \
@@ -17,5 +20,6 @@ extern FILE *log_file;
             fflush(log_file); \
         } \
     } while (0)
+#endif
 
 #endif

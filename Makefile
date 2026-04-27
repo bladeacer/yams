@@ -8,14 +8,14 @@ help: ## Show this help message
 	@echo "Targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Initialize meson build directory
+setup: ## Initialize meson build directory (Debug mode)
 	@meson setup build --buildtype=debugoptimized --optimization=s
 
 build: ## Compile yams using Ninja
 	@if [ ! -d "build" ]; then meson setup build; fi
 	@ninja -C build
 
-run: ## Run compiled binary
+run: ## Run compiled binary (Clean & Debug)
 	$(MAKE) clean
 	$(MAKE) build
 	./build/yams
@@ -23,7 +23,16 @@ run: ## Run compiled binary
 clean: ## Remove build directory
 	@rm -rf build
 
-install: build ## Install yams to the system
+release: clean ## Build a stripped release binary and check size
+	@meson setup build --buildtype=release -Dstrip=true --optimization=s
+	@ninja -C build
+	@echo ""
+	@echo "\033[32m--- Binary Info ---\033[0m"
+	@ls -lh build/yams
+	@echo -n "Total disk usage: "
+	@du -h build/yams
+
+install: release ## Build release binary and install to system
 	@sudo ninja -C build install
 
 uninstall: ## Remove yams from the system
