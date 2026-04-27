@@ -150,6 +150,18 @@ int main() {
                 player_pipe = popen(cmd, "r");
                 pipe_fd = fileno(player_pipe);
             }
+        } else if (activity == 0) {
+            static long last_check = 0;
+            long now = get_ms();
+            if (now - last_check > 2000) { // Check every 2 seconds
+                if (system("playerctl -l >/dev/null 2>&1") != 0) {
+                    if (m.status[0] != '\0') { // Was active, now gone
+                        clear_metadata();
+                        draw_dashboard();
+                    }
+                }
+                last_check = now;
+            }
         }
 
         if (FD_ISSET(STDIN_FILENO, &fds)) {

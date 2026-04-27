@@ -13,6 +13,7 @@ void clear_metadata() {
         }
     }
     m.lyric_count = 0;
+    memset(&m, 0, sizeof(Metadata));
 }
 
 void parse_block(char *block) {

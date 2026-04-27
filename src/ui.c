@@ -82,6 +82,7 @@ static void draw_help_text(WINDOW *win, int y, int x) {
     
     cur_y++; cur_x = x;
     DRAW_KEY("SPC", "Play/Pause");
+    cur_y++; cur_x = x;
     DRAW_KEY("h/L-Arrow", "Prev");
     DRAW_KEY("l/R-Arrow", "Next");
 }
@@ -109,7 +110,7 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     wattroff(win, A_BOLD);
 
     wattron(win, A_DIM);
-    const char* repo = "github.com/yourusername/yams";
+    const char* repo = "https://codeberg.org/bladeacer/yams";
     mvwprintw(win, mid_y + 1, mid_x - (strlen(repo)/2), "%s", repo);
     wattroff(win, A_DIM);
 
