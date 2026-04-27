@@ -57,11 +57,15 @@ Linux.
 
 Clone the repository, ensure you have listed dependencies on your system.
 
-Use `make install` to install binary to `/usr/local/bin`.
+```bash
+git clone --depth=1 https://codeberg.org/bladeacer/yams.git
+```
 
-Use `make release` to install stripped binary to `./build/yams`.
+- Use `make install` to install binary to `/usr/local/bin`.
 
-Use `make run` to install binary with debug to `./build/yams`.
+- Use `make release` to install stripped binary to `./build/yams`.
+
+- Use `make run` to install binary with debug to `./build/yams`.
 
 ### Binary size comparison
 
@@ -79,4 +83,4 @@ This is my first project using `ncurses`, C and UNIX tools like `strace`, `stat`
 
 ## License
 
-Apache-2.0.
+Dual licensed under either the MIT or Apache-2.0 License, at your own choice.
