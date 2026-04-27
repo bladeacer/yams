@@ -12,7 +12,6 @@
 #include "utils.h"
 #include "debug.h"
 
-// --- Global Declarations ---
 FILE *log_file = NULL; 
 FILE *player_pipe = NULL;
 long last_poll_time = 0;
@@ -22,7 +21,6 @@ long last_resize_time = 0;
 static char poll_buffer[BUFFER_SIZE];
 static size_t buf_idx = 0;
 
-// --- Signal Handlers ---
 void handle_exit(int sig) {
     DBG("handle_exit called with signal %d", sig);
     
@@ -45,8 +43,6 @@ void handle_winch(int sig) {
     last_resize_time = get_ms();
     resizeterm(0, 0); 
 }
-
-// --- Logic Helpers ---
 
 static void process_metadata_stream() {
     char *end_ptr;
@@ -95,8 +91,6 @@ static void handle_keypress(int ch) {
     }
 }
 
-// --- Main Loop ---
-
 int main() {
     setlocale(LC_ALL, "");
     log_file = fopen("yams.log", "a");
@@ -132,7 +126,6 @@ int main() {
 
         if (activity < 0 && errno != EINTR) break;
 
-        // 1. Process Metadata
         if (FD_ISSET(pipe_fd, &fds)) {
             char chunk[8192];
             ssize_t n = read(pipe_fd, chunk, sizeof(chunk) - 1);
@@ -146,19 +139,16 @@ int main() {
                     process_metadata_stream();
                 }
             } else if (n == 0) {
-                // Pipe closed, restart
                 pclose(player_pipe);
                 player_pipe = popen(cmd, "r");
                 pipe_fd = fileno(player_pipe);
             }
         }
 
-        // 2. Process User Input
         if (FD_ISSET(STDIN_FILENO, &fds)) {
             handle_keypress(getch());
         }
 
-        // 3. Process Resizes/Heartbeats
         if (resize_pending) {
             draw_dashboard();
             resize_pending = false;

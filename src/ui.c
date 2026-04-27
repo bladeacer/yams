@@ -66,15 +66,56 @@ static void format_display_url(char *dest, const char *src, size_t size) {
 }
 
 static void draw_help_text(WINDOW *win, int y, int x) {
-    wattron(win, A_REVERSE | A_BOLD);
-    mvwprintw(win, y, x, " q "); 
-    wattroff(win, A_REVERSE | A_BOLD);
-    waddstr(win, " Quit  ");
-    wattron(win, A_REVERSE | A_BOLD);
-    waddstr(win, " r ");
-    wattroff(win, A_REVERSE | A_BOLD);
-    waddstr(win, " Refresh");
+    int cur_y = y;
+    int cur_x = x;
+
+    #define DRAW_KEY(key, desc) { \
+        wattron(win, A_REVERSE | A_BOLD); \
+        mvwprintw(win, cur_y, cur_x, " %s ", key); \
+        wattroff(win, A_REVERSE | A_BOLD); \
+        waddstr(win, " " desc "  "); \
+        cur_x = getcurx(win); \
+    }
+
+    DRAW_KEY("q", "Quit");
+    DRAW_KEY("r", "Refresh");
+    
+    cur_y++; cur_x = x;
+    DRAW_KEY("SPC", "Play/Pause");
+    DRAW_KEY("h/<-", "Prev");
+    DRAW_KEY("l/->", "Next");
 }
+
+static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
+    int mid_y = max_y / 2;
+    int mid_x = max_x / 2;
+
+    wattron(win, COLOR_PAIR(1) | A_BOLD);
+    const char* logo[] = {
+        " __   __  _   _  __  __  ____ ",
+        " \\ \\ / / / \\ | ||  \\/  |/ ___|",
+        "  \\ V / / _ \\| || |\\/| |\\___ \\",
+        "   | | / ___ \\ || |  | | ___) |",
+        "   |_|/_/   \\_\\_||_|  |_||____/ "
+    };
+    for(int i = 0; i < 5; i++) {
+        mvwprintw(win, mid_y - 6 + i, mid_x - 15, "%s", logo[i]);
+    }
+    wattroff(win, COLOR_PAIR(1) | A_BOLD);
+
+    wattron(win, A_BOLD);
+    const char* msg = "Awaiting Player Input...";
+    mvwprintw(win, mid_y, mid_x - (strlen(msg)/2), "%s", msg);
+    wattroff(win, A_BOLD);
+
+    wattron(win, A_DIM);
+    const char* repo = "github.com/yourusername/yams";
+    mvwprintw(win, mid_y + 1, mid_x - (strlen(repo)/2), "%s", repo);
+    wattroff(win, A_DIM);
+
+    draw_help_text(win, mid_y + 4, mid_x - 20);
+}
+
 
 static void recreate_ui_components(int max_y, int max_x) {
     DBG("Reconstructing UI components: %dx%d", max_x, max_y);
@@ -181,9 +222,7 @@ void draw_dashboard() {
     if (main_win) werase(main_win);
 
     if (!player_active) {
-        const char* msg = "Awaiting Player Input...";
-        mvwprintw(main_win, (max_y - 2) / 2, (max_x - 2 - strlen(msg)) / 2, "%s", msg);
-        draw_help_text(main_win, (max_y - 2) / 2 + 2, (max_x - 2 - 26) / 2);
+        draw_fallback_screen(main_win, max_y - 2, max_x - 2);
     } else {
         int safe_w = max_x - 2;
         int safe_h = max_y - 2;
