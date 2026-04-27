@@ -82,8 +82,8 @@ static void draw_help_text(WINDOW *win, int y, int x) {
     
     cur_y++; cur_x = x;
     DRAW_KEY("SPC", "Play/Pause");
-    DRAW_KEY("h/<-", "Prev");
-    DRAW_KEY("l/->", "Next");
+    DRAW_KEY("h/L-Arrow", "Prev");
+    DRAW_KEY("l/R-Arrow", "Next");
 }
 
 static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {

@@ -100,6 +100,8 @@ int main() {
     signal(SIGWINCH, handle_winch);
 
     init_ui();
+    draw_dashboard();
+
     DBG("UI Initialized. Entering Event Loop.");
 
     const char *fmt = "PLAYER|{{playerName}}¶STATUS|{{status}}¶TITLE|{{xesam:title}}¶"
@@ -139,7 +141,12 @@ int main() {
                     process_metadata_stream();
                 }
             } else if (n == 0) {
+                DBG("Pipe closed. Clearing metadata and reverting to fallback.");
+                
                 pclose(player_pipe);
+                clear_metadata();
+                draw_dashboard();
+
                 player_pipe = popen(cmd, "r");
                 pipe_fd = fileno(player_pipe);
             }
