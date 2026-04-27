@@ -31,6 +31,13 @@ void parse_block(char *block) {
         else if (strncmp(token, "PLAYER|", 7) == 0) strncpy(m.player, token + 7, 63);
         else if (strncmp(token, "PATH|", 5) == 0) strncpy(m.file_path, token + 5, 4095);
         else if (strncmp(token, "ART|", 4) == 0) strncpy(m.art_url, token + 4, 4095);
+        else if (strncmp(token, "GENRE|", 6) == 0) strncpy(m.genre, token + 6, 511);
+        else if (strncmp(token, "COMPOSER|", 9) == 0) strncpy(m.composer, token + 9, 1023);
+        else if (strncmp(token, "LENGTH|", 7) == 0) {
+            long long micro = atoll(token + 7);
+            int seconds = (int)(micro / 1000000);
+            snprintf(m.length_str, 31, "%d:%02d", seconds / 60, seconds % 60);
+        }
         else if (strncmp(token, "LYRICS|", 7) == 0) {
             char *line_start = token + 7;
             char *line_end;

@@ -90,6 +90,24 @@ static void render_art(int x, int y, int w, int h) {
     reset_prog_mode();
 }
 
+static void format_display_url(char *dest, const char *src, size_t size) {
+    if (!src || strlen(src) == 0) {
+        strncpy(dest, "N/A", size);
+        return;
+    }
+
+    char decoded[4096];
+    const char *path_start = (strncmp(src, "file://", 7) == 0) ? src + 7 : src;
+    url_decode(decoded, path_start);
+
+    const char *home = getenv("HOME");
+    if (home && strncmp(decoded, home, strlen(home)) == 0) {
+        snprintf(dest, size, "~%s", decoded + strlen(home));
+    } else {
+        strncpy(dest, decoded, size - 1);
+    }
+}
+
 void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -116,16 +134,17 @@ void draw_dashboard() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     long now_ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 
-    // 1. REBUILD WINDOWS ONLY ON STRUCTURAL CHANGE
+    // 1. REBUILD WINDOWS
     if (structural_change || state_flip || !main_win) {
         resize_pending = false;
         last_x = max_x; last_y = max_y;
         last_player_state = player_active;
         
-        if (main_panel) del_panel(main_panel);
-        if (main_win) delwin(main_win);
-        if (lyr_sub) delwin(lyr_sub);
-        if (meta_sub) delwin(meta_sub);
+        // CRITICAL: Order of deletion and NULLing pointers
+        if (main_panel) { del_panel(main_panel); main_panel = NULL; }
+        if (lyr_sub)    { delwin(lyr_sub);    lyr_sub = NULL; }
+        if (meta_sub)   { delwin(meta_sub);   meta_sub = NULL; }
+        if (main_win)   { delwin(main_win);   main_win = NULL; }
 
         main_win = newwin(max_y - 2, max_x - 2, 1, 1);
         main_panel = new_panel(main_win);
@@ -135,12 +154,11 @@ void draw_dashboard() {
         erase();
     }
 
-    // 2. ALWAYS UPDATE CONTENT (Regardless of Cache)
-    // This ensures that if render_art wipes the screen, ncurses puts the text back
     werase(main_win);
     if (!player_active) {
         const char* msg = "Awaiting Player Input...";
         mvwprintw(main_win, (max_y-2)/2, (max_x-2-strlen(msg))/2, "%s", msg);
+        mvwprintw(main_win, (max_y-2)/2 + 2, (max_x-2-26)/2, "[q] Quit  |  [r] Refresh");
         memset(rendered_path_cache, 0, sizeof(rendered_path_cache));
     } else {
         int safe_w = max_x - 2;
@@ -149,32 +167,50 @@ void draw_dashboard() {
         int art_w = horizontal ? (int)(safe_w * 0.45) : safe_w - 6;
         int art_h = (int)(art_w * 0.5);
 
-        // Re-derive subwindows if they were lost or need relocation
-        if (!meta_sub || !lyr_sub || structural_change) {
-            if (meta_sub) delwin(meta_sub);
-            if (lyr_sub) delwin(lyr_sub);
-            if (!horizontal) {
-                meta_sub = derwin(main_win, 5, safe_w - 4, art_h + 1, 2);
-                lyr_sub = derwin(main_win, safe_h - art_h - 8, safe_w - 4, art_h + 7, 2);
-            } else {
+        // Re-derive subwindows if NULL
+        if (!meta_sub || !lyr_sub) {
+            if (horizontal) {
                 int split = art_w + 4;
-                meta_sub = derwin(main_win, 6, split - 4, art_h + 1, 2);
+                meta_sub = derwin(main_win, 11, split - 4, art_h + 1, 2);
                 lyr_sub = derwin(main_win, safe_h, safe_w - split - 2, 0, split + 2);
+            } else {
+                meta_sub = derwin(main_win, 11, safe_w - 4, art_h + 1, 2);
+                lyr_sub = derwin(main_win, safe_h - art_h - 13, safe_w - 4, art_h + 12, 2);
             }
         }
 
         // Draw Metadata
         werase(meta_sub);
         wattron(meta_sub, COLOR_PAIR(1) | A_BOLD);
-        mvwprintw(meta_sub, 0, 0, "● %s", safe_str(m.status));
+        mvwprintw(meta_sub, 0, 0, "● %s [%s]", safe_str(m.status), m.length_str);
         wattroff(meta_sub, A_BOLD);
-        mvwprintw(meta_sub, 1, 0, "Title:  %s", safe_str(m.title));
+        
+        mvwprintw(meta_sub, 1, 0, "Title:    %s", safe_str(m.title));
         wattron(meta_sub, COLOR_PAIR(2));
-        mvwprintw(meta_sub, 2, 0, "Artist: %s", safe_str(m.artist));
-        mvwprintw(meta_sub, 3, 0, "Album:  %s", safe_str(m.album));
+        mvwprintw(meta_sub, 2, 0, "Artist:   %s", safe_str(m.artist));
+        mvwprintw(meta_sub, 3, 0, "Album:    %s", safe_str(m.album));
         wattroff(meta_sub, COLOR_PAIR(2));
+        
+        mvwprintw(meta_sub, 4, 0, "Genre:    %s", safe_str(m.genre));
+        mvwprintw(meta_sub, 5, 0, "Composer: %s", safe_str(m.composer));
+        
+        wattron(meta_sub, A_DIM);
+        char display_url[1024];
+        format_display_url(display_url, m.file_path, sizeof(display_url));
+        mvwprintw(meta_sub, 7, 0, "Source: %s", display_url);
+        wattroff(meta_sub, A_DIM);
 
-        // Draw Lyrics or Fallback
+        // Controls
+        wattron(meta_sub, A_REVERSE | A_BOLD);
+        mvwprintw(meta_sub, 9, 0, " q "); 
+        wattroff(meta_sub, A_REVERSE | A_BOLD);
+        waddstr(meta_sub, " Quit  ");
+        wattron(meta_sub, A_REVERSE | A_BOLD);
+        mvwprintw(meta_sub, 9, 10, " r ");
+        wattroff(meta_sub, A_REVERSE | A_BOLD);
+        waddstr(meta_sub, " Refresh");
+
+        // Lyrics
         if (metadata_change) scroll_pos = 0;
         werase(lyr_sub);
         if (m.lyric_count > 0) {
@@ -185,18 +221,16 @@ void draw_dashboard() {
             wattroff(lyr_sub, COLOR_PAIR(3));
         } else {
             wattron(lyr_sub, A_DIM);
-            mvwprintw(lyr_sub, 2, 0, "  (No lyrics found for this track)");
+            mvwprintw(lyr_sub, 2, 0, "  (No lyrics found)");
             wattroff(lyr_sub, A_DIM);
         }
     }
 
-    // 3. FINAL PUSH
     strncpy(rendered_title_cache, current_title_sig, sizeof(rendered_title_cache) - 1);
     touchwin(stdscr);
     update_panels();
     doupdate();
 
-    // 4. ART (Drawn over the ncurses buffer)
     if (player_active && strlen(current_source) > 5) {
         if (metadata_change || structural_change || (now_ms - last_art_render_ms > 200)) {
             int art_w = (max_x > 90) ? (int)((max_x - 2) * 0.45) : (max_x - 8);
