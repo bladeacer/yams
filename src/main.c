@@ -58,8 +58,8 @@ int main() {
 
     char poll_buffer[BUFFER_SIZE];
     DBG("CHECKPOINT: Entering Main Loop");
+    
     while (1) {
-
         int ch = getch();
         bool should_draw = false;
 
@@ -76,40 +76,38 @@ int main() {
                           break;
                 case KEY_RESIZE:
                           resize_pending = true;
-                          // Immediate resizeterm call helps ncurses update its internal maxyx
                           resizeterm(0, 0);
                           should_draw = true;
                           break;
             }
         }
 
-        // Inside the main while(1) loop:
         long now = get_ms();
         if (now - last_poll_time > POLL_INTERVAL_MS) {
             last_poll_time = now;
 
             FILE *fp = popen(cmd, "r");
             if (fp) {
-                memset(poll_buffer, 0, BUFFER_SIZE); // Clear before use
+                memset(poll_buffer, 0, BUFFER_SIZE);
                 size_t read_bytes = fread(poll_buffer, 1, BUFFER_SIZE - 1, fp);
-                pclose(fp); // Close immediately after reading
+                pclose(fp);
 
                 if (read_bytes > 0) {
                     parse_block(poll_buffer);
-                    should_draw = true;
+                } else {
+                    // CRITICAL: Clear metadata if playerctl returns nothing
+                    memset(&m, 0, sizeof(m)); 
                 }
-            } else {
-                DBG("UI_ERROR: popen failed for cmd: %s", cmd);
+                // ALWAYS trigger a draw after a poll, even if empty
+                should_draw = true; 
             }
         }
 
         if (should_draw) {
             draw_dashboard(); 
             if (resize_pending) {
-                // Wait a tiny bit for the terminal to settle after resize
                 usleep(30000); 
-                resize_pending = false;
-                draw_dashboard(); // Redraw once more with art
+                draw_dashboard();
             }
         }
 

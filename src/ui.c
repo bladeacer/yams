@@ -11,8 +11,6 @@
 
 bool resize_pending = false;
 int scroll_pos = 0; 
-static int last_scroll_pos = -1;
-static time_t last_update_time = 0;
 
 static WINDOW *main_win = NULL;
 static PANEL  *main_panel = NULL;
@@ -97,24 +95,29 @@ void draw_dashboard() {
     getmaxyx(stdscr, max_y, max_x);
 
     static char rendered_path_cache[4096] = {0};
+    static char rendered_title_cache[2048] = {0};
     static int last_x = 0, last_y = 0;
     static long last_art_render_ms = 0;
     static bool last_player_state = false;
 
     char *current_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
-    bool player_active = (m.status && strlen(m.status) > 0 && strcmp(m.status, "Stopped") != 0);
+    bool player_active = (m.status[0] != '\0' && strcmp(m.status, "Stopped") != 0);
+
+    char current_title_sig[2048];
+    snprintf(current_title_sig, sizeof(current_title_sig), "%s%s", 
+             safe_str(m.title), safe_str(m.artist));
     
-    // 1. Check for resize: This MUST be handled instantly for the UI to feel responsive
     bool structural_change = (max_x != last_x || max_y != last_y) || resize_pending;
-    bool metadata_change = (strcmp(current_source, rendered_path_cache) != 0);
+    bool metadata_change = (strcmp(current_source, rendered_path_cache) != 0) || 
+                           (strcmp(current_title_sig, rendered_title_cache) != 0);
     bool state_flip = (player_active != last_player_state);
 
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     long now_ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 
-    // Remove the 300ms throttle from the structural/metadata logic
-    if (structural_change || metadata_change || state_flip) {
+    // 1. REBUILD WINDOWS ONLY ON STRUCTURAL CHANGE
+    if (structural_change || state_flip || !main_win) {
         resize_pending = false;
         last_x = max_x; last_y = max_y;
         last_player_state = player_active;
@@ -124,101 +127,83 @@ void draw_dashboard() {
         if (lyr_sub) delwin(lyr_sub);
         if (meta_sub) delwin(meta_sub);
 
-        int safe_h = max_y - 2;
-        int safe_w = max_x - 2;
-        main_win = newwin(safe_h, safe_w, 1, 1);
+        main_win = newwin(max_y - 2, max_x - 2, 1, 1);
         main_panel = new_panel(main_win);
         
-        if (state_flip || structural_change) {
-            printf("\033[2J\033[H"); 
-            fflush(stdout);
-        }
-
+        printf("\033[2J\033[H"); 
+        fflush(stdout);
         erase();
-        wnoutrefresh(stdscr);
+    }
 
-        if (!player_active) {
-            const char* msg = "Awaiting Player Input...";
-            wattron(main_win, A_DIM);
-            mvwprintw(main_win, safe_h/2, (safe_w - (int)strlen(msg))/2, "%s", msg);
-            wattroff(main_win, A_DIM);
-            memset(rendered_path_cache, 0, sizeof(rendered_path_cache));
-            update_panels();
-            doupdate();
-            return;
-        }
-
-        // Layout calcs...
-        int art_x = 2, art_y = 0, art_w, art_h;
-        int lx, ly, lw, lh, mx, my, mw, mh;
+    // 2. ALWAYS UPDATE CONTENT (Regardless of Cache)
+    // This ensures that if render_art wipes the screen, ncurses puts the text back
+    werase(main_win);
+    if (!player_active) {
+        const char* msg = "Awaiting Player Input...";
+        mvwprintw(main_win, (max_y-2)/2, (max_x-2-strlen(msg))/2, "%s", msg);
+        memset(rendered_path_cache, 0, sizeof(rendered_path_cache));
+    } else {
+        int safe_w = max_x - 2;
+        int safe_h = max_y - 2;
         bool horizontal = (max_x > 90);
+        int art_w = horizontal ? (int)(safe_w * 0.45) : safe_w - 6;
+        int art_h = (int)(art_w * 0.5);
 
-        if (!horizontal) {
-            art_w = safe_w - 6;
-            art_h = (int)(art_w * 0.48); 
-            if (art_h > (safe_h - 12)) art_h = safe_h - 12;
-            my = art_h + 1; mx = 2; mw = safe_w - 4; mh = 5;
-            ly = my + mh + 1; lx = 2; lw = safe_w - 4; lh = safe_h - ly;
-        } else {
-            int split = (int)(safe_w * 0.60);
-            art_w = split - 6;
-            art_h = (int)(art_w * 0.48); 
-            if (art_h > (safe_h - 8)) art_h = safe_h - 8;
-            my = art_h + 1; mx = 2; mw = split - 4; mh = 5;
-            lx = split + 2; ly = 0; lw = safe_w - lx - 2; lh = safe_h;
+        // Re-derive subwindows if they were lost or need relocation
+        if (!meta_sub || !lyr_sub || structural_change) {
+            if (meta_sub) delwin(meta_sub);
+            if (lyr_sub) delwin(lyr_sub);
+            if (!horizontal) {
+                meta_sub = derwin(main_win, 5, safe_w - 4, art_h + 1, 2);
+                lyr_sub = derwin(main_win, safe_h - art_h - 8, safe_w - 4, art_h + 7, 2);
+            } else {
+                int split = art_w + 4;
+                meta_sub = derwin(main_win, 6, split - 4, art_h + 1, 2);
+                lyr_sub = derwin(main_win, safe_h, safe_w - split - 2, 0, split + 2);
+            }
         }
 
-        meta_sub = derwin(main_win, mh, mw, my, mx);
-        lyr_sub = derwin(main_win, lh, lw, ly, lx);
-
-        // Instant Metadata Update
+        // Draw Metadata
         werase(meta_sub);
-        wattron(meta_sub, A_BOLD | COLOR_PAIR(1));
-        mvwprintw(meta_sub, 0, 0, "%s | %s", safe_str(m.status), safe_str(m.player));
+        wattron(meta_sub, COLOR_PAIR(1) | A_BOLD);
+        mvwprintw(meta_sub, 0, 0, "● %s", safe_str(m.status));
         wattroff(meta_sub, A_BOLD);
-        mvwprintw(meta_sub, 1, 0, "Title: %.*s", mw-7, safe_str(m.title));
+        mvwprintw(meta_sub, 1, 0, "Title:  %s", safe_str(m.title));
         wattron(meta_sub, COLOR_PAIR(2));
-        mvwprintw(meta_sub, 2, 0, "Artist: %.*s", mw-8, safe_str(m.artist));
-        mvwprintw(meta_sub, 3, 0, "Album:  %.*s", mw-8, safe_str(m.album));
+        mvwprintw(meta_sub, 2, 0, "Artist: %s", safe_str(m.artist));
+        mvwprintw(meta_sub, 3, 0, "Album:  %s", safe_str(m.album));
         wattroff(meta_sub, COLOR_PAIR(2));
 
-        if (metadata_change) {
-            scroll_pos = 0;
-        }
-
+        // Draw Lyrics or Fallback
+        if (metadata_change) scroll_pos = 0;
         werase(lyr_sub);
-        wattron(lyr_sub, COLOR_PAIR(3));
-
         if (m.lyric_count > 0) {
-            for (int i = 0; i < lh; i++) {
-                int lyric_idx = i + scroll_pos;
-                if (lyric_idx >= 0 && lyric_idx < m.lyric_count) {
-                    if (m.lyrics[lyric_idx]) {
-                        wmove(lyr_sub, i, 0);
-                        wclrtoeol(lyr_sub); 
-                        mvwaddnstr(lyr_sub, i, 0, m.lyrics[lyric_idx], lw);
-                    }
-                }
+            wattron(lyr_sub, COLOR_PAIR(3));
+            for (int i = 0; i < getmaxy(lyr_sub) && (i + scroll_pos) < m.lyric_count; i++) {
+                mvwaddnstr(lyr_sub, i, 0, m.lyrics[i + scroll_pos], getmaxx(lyr_sub));
             }
+            wattroff(lyr_sub, COLOR_PAIR(3));
         } else {
-            mvwprintw(lyr_sub, 0, 0, " (No lyrics detected) ");
+            wattron(lyr_sub, A_DIM);
+            mvwprintw(lyr_sub, 2, 0, "  (No lyrics found for this track)");
+            wattroff(lyr_sub, A_DIM);
         }
-        wattroff(lyr_sub, COLOR_PAIR(3));
+    }
 
-        update_panels();
-        doupdate();
+    // 3. FINAL PUSH
+    strncpy(rendered_title_cache, current_title_sig, sizeof(rendered_title_cache) - 1);
+    touchwin(stdscr);
+    update_panels();
+    doupdate();
 
-        if (player_active) {
-            // If it's a new song, we want to render ASAP, but if we just rendered 
-            // 50ms ago (from a resize), we wait.
-            if (metadata_change || now_ms - last_art_render_ms > 200) {
-                render_art(art_x + 1, art_y + 1, art_w - 1, art_h - 1);
-                last_art_render_ms = now_ms;
-                strncpy(rendered_path_cache, current_source, 4095);
-            }
-        } else {
-            // Ensure cache is cleared if no player, so it re-renders on next song
-            rendered_path_cache[0] = '\0';
+    // 4. ART (Drawn over the ncurses buffer)
+    if (player_active && strlen(current_source) > 5) {
+        if (metadata_change || structural_change || (now_ms - last_art_render_ms > 200)) {
+            int art_w = (max_x > 90) ? (int)((max_x - 2) * 0.45) : (max_x - 8);
+            int art_h = (int)(art_w * 0.5);
+            render_art(3, 1, art_w, art_h);
+            last_art_render_ms = now_ms;
+            strncpy(rendered_path_cache, current_source, sizeof(rendered_path_cache) - 1);
         }
     }
 }
