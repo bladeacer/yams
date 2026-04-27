@@ -32,12 +32,8 @@ void parse_block(char *block) {
         else if (strncmp(token, "PATH|", 5) == 0) strncpy(m.file_path, token + 5, 4095);
         else if (strncmp(token, "ART|", 4) == 0) {
             char *art_val = token + 4;
-            // CHECK FOR BASE64 GHOSTING:
-            // If it starts with "data:image", it's a massive binary blob.
-            // We set it to empty so the UI falls back to file_path.
             if (strncmp(art_val, "data:image", 10) == 0) {
                 m.art_url[0] = '\0';
-                DBG("MPV Base64 art detected - bypassing to prevent overflow.");
             } else {
                 strncpy(m.art_url, art_val, 4095);
             }

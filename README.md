@@ -21,7 +21,7 @@ Refresh button does not help for this.
 ## Tested Media Players
 
 - mpv (requires mpv-mpris)
-<!-- - YouTube Web -->
+- YouTube Web
 - YouTube Music Web
 - Tauon
 
