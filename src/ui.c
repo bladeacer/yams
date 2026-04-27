@@ -130,25 +130,19 @@ void draw_dashboard() {
     static long last_art_render_ms = 0;
     static bool last_player_state = false;
 
-    // --- NUCLEAR RESET ON REFRESH ---
     if (resize_pending) {
-        // 1. Wipe caches
         memset(rendered_path_cache, 0, sizeof(rendered_path_cache));
         memset(rendered_title_cache, 0, sizeof(rendered_title_cache));
         last_art_render_ms = 0;
-
-        // 2. Clear hardware terminal and reset ncurses internal state
-        printf("\033[2J\033[H\033[0m"); // Clear screen, cursor to home, reset attributes
+        printf("\033[2J\033[H\033[0m"); 
         fflush(stdout);
-        clearok(stdscr, TRUE); // Force ncurses to repaint every single pixel
+        clearok(stdscr, TRUE); 
     }
 
     char *current_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     bool player_active = (m.status[0] != '\0' && strcmp(m.status, "Stopped") != 0);
-
     char current_title_sig[2048];
-    snprintf(current_title_sig, sizeof(current_title_sig), "%s%s", 
-             safe_str(m.title), safe_str(m.artist));
+    snprintf(current_title_sig, sizeof(current_title_sig), "%s%s", safe_str(m.title), safe_str(m.artist));
     
     bool structural_change = (max_x != last_x || max_y != last_y) || resize_pending;
     bool metadata_change = (strcmp(current_source, rendered_path_cache) != 0) || 
@@ -159,23 +153,16 @@ void draw_dashboard() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     long now_ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 
-    // 3. COMPLETE LAYOUT RECONSTRUCTION
     if (structural_change || state_flip || !main_win) {
         resize_pending = false; 
         last_x = max_x; last_y = max_y;
         last_player_state = player_active;
-        
-        // Delete everything in reverse order of creation
         if (main_panel) { del_panel(main_panel); main_panel = NULL; }
         if (lyr_sub)    { delwin(lyr_sub);    lyr_sub = NULL; }
         if (meta_sub)   { delwin(meta_sub);   meta_sub = NULL; }
         if (main_win)   { delwin(main_win);   main_win = NULL; }
-
-        // Fresh allocation
         main_win = newwin(max_y - 2, max_x - 2, 1, 1);
         main_panel = new_panel(main_win);
-        
-        // Sync ncurses with the new reality
         erase();
         refresh();
     }
@@ -189,45 +176,53 @@ void draw_dashboard() {
         int safe_w = max_x - 2;
         int safe_h = max_y - 2;
         bool horizontal = (max_x > 90);
-        int art_w = horizontal ? (int)(safe_w * 0.45) : safe_w - 6;
-        int art_h = (int)(art_w * 0.5);
+        
+        // --- HARD LIMITS FOR ULTRAWIDE ---
+        int max_allowed_w = horizontal ? 54 : 50; // Slightly narrower for ultrawide
+        int max_allowed_h = horizontal ? 24 : 22; // Hard cap on height to save metadata space
 
-        // Always re-derive subwindows if they were wiped in step 3
+        int art_w = horizontal ? (int)(safe_w * 0.4) : safe_w - 6;
+        if (art_w > max_allowed_w) art_w = max_allowed_w;
+
+        int art_h = (int)(art_w * 0.5); 
+        if (art_h > max_allowed_h) art_h = max_allowed_h;
+
+        // Re-derive subwindows
         if (!meta_sub || !lyr_sub) {
             if (horizontal) {
-                int split = art_w + 4;
-                meta_sub = derwin(main_win, 11, split - 4, art_h + 1, 2);
+                // Fix: Ensure split doesn't push lyrics too far or metadata too wide
+                int split = art_w + 6; 
+                int meta_w = split - 4;
+                if (meta_w > 60) meta_w = 60; // Cap metadata width
+
+                meta_sub = derwin(main_win, 11, meta_w, art_h + 2, 2);
                 lyr_sub = derwin(main_win, safe_h, safe_w - split - 2, 0, split + 2);
             } else {
-                meta_sub = derwin(main_win, 11, safe_w - 4, art_h + 1, 2);
-                lyr_sub = derwin(main_win, safe_h - art_h - 14, safe_w - 4, art_h + 13, 2);
+                meta_sub = derwin(main_win, 11, safe_w - 4, art_h + 2, 2);
+                lyr_sub = derwin(main_win, safe_h - art_h - 15, safe_w - 4, art_h + 14, 2);
             }
         }
 
-        // Render Metadata content
+        // Render Metadata
         werase(meta_sub);
         wattron(meta_sub, COLOR_PAIR(1) | A_BOLD);
-        mvwprintw(meta_sub, 0, 0, "● %s [%s]", safe_str(m.status), m.length_str);
+        mvwprintw(meta_sub, 0, 0, "\u25CF %s   [%s]", safe_str(m.status), m.length_str);
         wattroff(meta_sub, A_BOLD);
-        
-        mvwprintw(meta_sub, 1, 0, "Title:    %s", safe_str(m.title));
+        mvwprintw(meta_sub, 1, 0, "  Title:    %s", safe_str(m.title));
         wattron(meta_sub, COLOR_PAIR(2));
-        mvwprintw(meta_sub, 2, 0, "Artist:   %s", safe_str(m.artist));
-        mvwprintw(meta_sub, 3, 0, "Album:    %s", safe_str(m.album));
+        mvwprintw(meta_sub, 2, 0, "  Artist:   %s", safe_str(m.artist));
+        mvwprintw(meta_sub, 3, 0, "  Album:    %s", safe_str(m.album));
         wattroff(meta_sub, COLOR_PAIR(2));
-        
-        mvwprintw(meta_sub, 4, 0, "Genre:    %s", safe_str(m.genre));
-        mvwprintw(meta_sub, 5, 0, "Composer: %s", safe_str(m.composer));
-        
+        mvwprintw(meta_sub, 4, 0, "  Genre:    %s", safe_str(m.genre));
+        mvwprintw(meta_sub, 5, 0, "  Composer: %s", safe_str(m.composer));
         wattron(meta_sub, A_DIM);
         char display_url[1024];
         format_display_url(display_url, m.file_path, sizeof(display_url));
-        mvwprintw(meta_sub, 6, 0, "Source:   %s", display_url);
+        mvwprintw(meta_sub, 6, 0, "  Source:   %s", display_url);
         wattroff(meta_sub, A_DIM);
-
         draw_help_text(meta_sub, 9, 0);
 
-        // Render Lyrics content
+        // Render Lyrics
         if (metadata_change) scroll_pos = 0;
         werase(lyr_sub);
         if (m.lyric_count > 0) {
@@ -241,23 +236,16 @@ void draw_dashboard() {
             mvwprintw(lyr_sub, 2, 0, "  (No lyrics found)");
             wattroff(lyr_sub, A_DIM);
         }
-    }
 
-    // Cache current state
-    strncpy(rendered_title_cache, current_title_sig, sizeof(rendered_title_cache) - 1);
-    
-    // 4. THE PUSH
-    update_panels();
-    doupdate();
-
-    // 5. THE IMAGE (Always last, drawn on top)
-    if (player_active && strlen(current_source) > 5) {
-        if (metadata_change || structural_change || (now_ms - last_art_render_ms > 200)) {
-            int art_w = (max_x > 90) ? (int)((max_x - 2) * 0.45) : (max_x - 8);
-            int art_h = (int)(art_w * 0.5);
+        // 5. THE IMAGE
+        if (player_active && (metadata_change || structural_change || (now_ms - last_art_render_ms > 200))) {
             render_art(3, 1, art_w, art_h);
             last_art_render_ms = now_ms;
             strncpy(rendered_path_cache, current_source, sizeof(rendered_path_cache) - 1);
         }
     }
+
+    strncpy(rendered_title_cache, current_title_sig, sizeof(rendered_title_cache) - 1);
+    update_panels();
+    doupdate();
 }
