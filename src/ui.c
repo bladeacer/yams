@@ -111,6 +111,7 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     int mid_y = max_y / 2;
     int mid_x = max_x / 2;
 
+    wattron(win, A_BOLD);
     const char* logo[] = {
         "██╗   ██╗ █████╗ ███╗   ███╗███████╗",
         "╚██╗ ██╔╝██╔══██╗████╗ ████║██╔════╝",
@@ -120,22 +121,23 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
         "   ╚═╝   ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝"
     };
     for(int i = 0; i < 5; i++) {
-        mvwprintw(win, mid_y - 6 + i, mid_x - 18, "%s", logo[i]);
+        mvwprintw(win, mid_y - 6 + i, mid_x - 19, "%s", logo[i]);
     }
-    wattroff(win, COLOR_PAIR(4) | A_BOLD);
+    const char* msg2 = "Awaiting Player Input...";
+    mvwprintw(win, mid_y + 1, mid_x - (strlen(msg2)/2), "%s", msg2);
 
-    wattron(win, A_BOLD);
-    const char* msg = "Awaiting Player Input...";
-    mvwprintw(win, mid_y, mid_x - (strlen(msg)/2), "%s", msg);
     wattroff(win, A_BOLD);
 
     wattron(win, A_DIM);
+    const char* msg1 = "Yet Another Media Screensaver";
+    mvwprintw(win, mid_y + 2, mid_x - (strlen(msg1)/2), "%s", msg1);
+
     const char* repo = "https://codeberg.org/bladeacer/yams";
 
-    mvwprintw(win, mid_y + 1, mid_x - (strlen(repo)/2), "%s", repo);
+    mvwprintw(win, mid_y + 4, mid_x - (strlen(repo)/2), "%s", repo);
     wattroff(win, A_DIM);
 
-    draw_help_text(win, mid_y + 4, mid_x - 14);
+    draw_help_text(win, mid_y + 6, mid_x - 15);
 }
 
 static void render_metadata_pane(WINDOW *win) {

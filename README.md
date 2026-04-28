@@ -1,6 +1,7 @@
 # yams
 
-Yet another media status indicator/screensaver.
+Yet another media screensaver.
+> Or status indicator
 
 `playerctl` wrapper go brr.
 
@@ -17,14 +18,11 @@ Yet another media status indicator/screensaver.
 
 ## Planned
 
-- Fallback ASCII art alignment/rendering
-- Fix help text rendering in non-fallback mode
-- Rendering for smaller screens?
+- Rendering layout for smaller screens
 
 ## Known Issues
 
 Needs programme restart.
-- TUI does not dynamically resize when window size is changed at runtime.
 - Fallback mode check not triggered by refresh hotkey.
 
 ## Tested Media Players
