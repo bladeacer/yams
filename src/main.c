@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <ncurses.h>
 #include <locale.h>
+#include <sys/wait.h>
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
@@ -20,6 +21,7 @@ long last_resize_time = 0;
 #define BUFFER_SIZE 262144
 static char poll_buffer[BUFFER_SIZE];
 static size_t buf_idx = 0;
+static pid_t ctrl_pid = -1;
 
 void handle_exit(int sig) {
     DBG("handle_exit called with signal %d", sig);
@@ -27,6 +29,11 @@ void handle_exit(int sig) {
     if (player_pipe) {
         int pipe_fd = fileno(player_pipe);
         close(pipe_fd); 
+    }
+
+    if (ctrl_pid > 0) {
+        kill(ctrl_pid, SIGTERM);
+        waitpid(ctrl_pid, NULL, WNOHANG);
     }
 
     if (log_file) {
@@ -70,17 +77,43 @@ static void process_metadata_stream() {
     if (updated) draw_dashboard();
 }
 
+void run_player_cmd(const char *action) {
+    // 1. Check if a previous command is still running
+    if (ctrl_pid > 0) {
+        int status;
+        // WNOHANG checks status without blocking
+        if (waitpid(ctrl_pid, &status, WNOHANG) == 0) {
+            DBG("Previous command %d still active. Skipping.", ctrl_pid);
+            return; 
+        }
+    }
+
+    ctrl_pid = fork();
+    if (ctrl_pid == 0) {
+        // Child process: redirect output to null to keep terminal clean
+        int devnull = open("/dev/null", O_WRONLY);
+        dup2(devnull, STDOUT_FILENO);
+        dup2(devnull, STDERR_FILENO);
+        
+        // Execute playerctl
+        char *args[] = {"playerctl", (char *)action, NULL};
+        execvp("playerctl", args);
+        _exit(1); // Should only reach here if exec fails
+    }
+}
+
 static void handle_keypress(int ch) {
     if (ch == ERR) return;
     
     const char *cmd = NULL;
     switch (ch) {
-        case 'q':          handle_exit(0);                 break;
-        case ' ':          cmd = "playerctl play-pause &"; break;
+        case 'q': handle_exit(0); break;
+        case ' ': run_player_cmd("play-pause"); break;
         case 'h':
-        case KEY_RIGHT:    cmd = "playerctl next &";       break;
+        case KEY_LEFT:  run_player_cmd("previous"); break;
         case 'l':
-        case KEY_LEFT:     cmd = "playerctl previous &";   break;
+        case KEY_RIGHT: run_player_cmd("next");     break;
+
         case 'r':
         case KEY_RESIZE:       
             if (system("playerctl -l >/dev/null 2>&1") != 0) {
@@ -173,5 +206,6 @@ int main() {
     }
 
     handle_exit(0);
+    if (ctrl_pid > 0) waitpid(ctrl_pid, NULL, WNOHANG);
     return 0;
 }
