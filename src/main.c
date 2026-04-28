@@ -114,6 +114,11 @@ static void process_metadata_stream() {
 }
 
 void show_help_overlay() {
+    static bool is_active = false;
+    
+    if (is_active) return;
+    is_active = true;
+
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
@@ -158,7 +163,10 @@ void show_help_overlay() {
 
     del_panel(help_panel);
     delwin(help_win);
+    
     resize_pending = true;
+    
+    is_active = false;
 }
 
 
@@ -184,9 +192,22 @@ static void handle_keypress(int ch) {
         case KEY_RESIZE:       
             resize_pending = true; 
             break;
+
+        case 27:
+        case KEY_MOUSE:
+        case KEY_PPAGE:
+        case KEY_NPAGE:
+        case KEY_SR:
+        case KEY_SF:
+            break;
         case '?': 
+            show_help_overlay();
+            break;
         default:
-            show_help_overlay(); break;
+            if (ch >= 32 && ch <= 126) {
+                show_help_overlay();
+            }
+            break;
     }
 }
 

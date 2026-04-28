@@ -27,9 +27,18 @@ void init_ui() {
     initscr();
     cbreak();
     noecho();
+    noqiflush();
     keypad(stdscr, TRUE);
     nodelay(stdscr, TRUE);
+
     curs_set(0); 
+
+    mousemask(0, NULL);
+    mouseinterval(-1);
+    intrflush(stdscr, FALSE);
+
+    printf("\033[?1000l\033[?1002l\033[?1003l\033[?1006l");
+    fflush(stdout);
 
     if (has_colors()) {
         start_color();
