@@ -181,16 +181,20 @@ static void render_lyrics_pane(WINDOW *win) {
     }
 }
 
-static void update_and_render_art(const char* current_art_source, const char* current_title_sig, int art_w, int art_h) {
+static void update_and_render_art(const char* current_art_source, const char* current_title_sig, 
+        int art_w, int art_h, bool force) {
+    
     bool source_changed = strcmp(current_art_source, last_art_path) != 0;
     bool title_changed = strcmp(current_title_sig, last_title_sig) != 0;
 
-    DBG("Redrawing Art: %s", current_art_source);
+    if (force || source_changed || title_changed) {
+        DBG("Executing Art Render: %s (Force: %s)", current_art_source, force ? "Yes" : "No");
+        
+        render_art(3, 1, art_w, art_h);
 
-    render_art(3, 1, art_w, art_h);
-
-    strncpy(last_art_path, current_art_source, sizeof(last_art_path) - 1);
-    strncpy(last_title_sig, current_title_sig, sizeof(last_title_sig) - 1);
+        strncpy(last_art_path, current_art_source, sizeof(last_art_path) - 1);
+        strncpy(last_title_sig, current_title_sig, sizeof(last_title_sig) - 1);
+    }
 }
 
 static void recreate_ui_components(int max_y, int max_x, 
@@ -218,7 +222,7 @@ static void recreate_ui_components(int max_y, int max_x,
     last_art_path[0] = '\0';
     last_title_sig[0] = '\0';
 
-    update_and_render_art(art_src, title_sig, w, h);
+    update_and_render_art(art_src, title_sig, w, h, true);
 
     last_w = max_x; 
     last_h = max_y;
@@ -278,7 +282,7 @@ void draw_dashboard() {
         doupdate();
 
         if (is_new_track || is_resize) {
-            update_and_render_art(current_art_source, current_title_sig, art_w, art_h);
+            update_and_render_art(current_art_source, current_title_sig, art_w, art_h, false);
         }
     }
 
