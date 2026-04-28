@@ -7,19 +7,9 @@
 #include "utils.h"
 #include "debug.h"
 
-static char last_rendered_path[4096] = {0};
-bool force_art_redraw = false;
-
 void render_art(int x, int y, int w, int h) {
     char *input_url = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     if (!input_url || strlen(input_url) < 5) return;
-
-    static int last_w = 0;
-    if (!force_art_redraw && strcmp(input_url, last_rendered_path) == 0 && w == last_w) {
-        return; 
-    }
-    force_art_redraw = false;
-    last_w = w;
 
     char decoded_path[4096];
     const char *raw_path = input_url;
@@ -47,8 +37,6 @@ void render_art(int x, int y, int w, int h) {
             w, h, 
             x + 1);
 
-    strncpy(last_rendered_path, input_url, sizeof(last_rendered_path) - 1);
-
     def_prog_mode(); 
     printf("\x1b[%d;%dH", y + 1, x + 1);
     fflush(stdout);
@@ -64,7 +52,6 @@ void render_art(int x, int y, int w, int h) {
         
         if (!lines_read) {
             DBG("Art pipeline produced no output for: %s", safe_path);
-            last_rendered_path[0] = '\0';
         }
         pclose(fp);
     }

@@ -17,6 +17,12 @@ static PANEL  *main_panel = NULL;
 static WINDOW *lyr_sub = NULL;
 static WINDOW *meta_sub = NULL;
 
+static int last_w = 0;
+static int last_h = 0;
+static char last_art_path[4096] = {0};
+static char last_title_sig[2048] = {0};
+static bool last_player_active = false;
+
 void init_ui() {
     initscr();
     cbreak();
@@ -24,7 +30,7 @@ void init_ui() {
     keypad(stdscr, TRUE);
     nodelay(stdscr, TRUE);
     curs_set(0); 
-    
+
     if (has_colors()) {
         start_color();
         use_default_colors();
@@ -69,32 +75,30 @@ static void draw_help_text(WINDOW *win, int y, int x, bool fallback) {
     int cur_y = y;
     int cur_x = x;
 
-    #define DRAW_KEY(key, desc) { \
-        wattron(win, A_REVERSE | A_BOLD); \
-        mvwprintw(win, cur_y, cur_x, " %s ", key); \
-        wattroff(win, A_REVERSE | A_BOLD); \
-        waddstr(win, " " desc "  "); \
-        cur_x = getcurx(win); \
-    }
+#define DRAW_KEY(key, desc) { \
+    wattron(win, A_REVERSE | A_BOLD); \
+    mvwprintw(win, cur_y, cur_x, " %s ", key); \
+    wattroff(win, A_REVERSE | A_BOLD); \
+    waddstr(win, " " desc "  "); \
+    cur_x = getcurx(win); \
+}
 
     if (fallback) {
-        // Compact view for fallback screen
         DRAW_KEY("q", "Quit");
         DRAW_KEY("r", "Refresh");
     } else {
-        // Multi-line view for active media
         DRAW_KEY("q", "Quit");
         DRAW_KEY("r", "Refresh");
-        
+
         cur_y++; cur_x = x;
         DRAW_KEY("SPC", "Play/Pause");
-        
+
         cur_y++; cur_x = x;
         DRAW_KEY("h", "Prev");
         DRAW_KEY("l", "Next");
-        
+
         wattron(win, A_DIM);
-        waddstr(win, " (Arrows supported)");
+        waddstr(win, "(Arrows supported)");
         wattroff(win, A_DIM);
     }
 }
@@ -130,26 +134,6 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     draw_help_text(win, mid_y + 4, mid_x - 10, true);
 }
 
-
-static void recreate_ui_components(int max_y, int max_x) {
-    DBG("Reconstructing UI components: %dx%d", max_x, max_y);
-    
-    printf("\033[2J\033[H\033[0m"); 
-    fflush(stdout);
-
-    if (main_panel) { del_panel(main_panel); main_panel = NULL; }
-    if (lyr_sub)    { delwin(lyr_sub);    lyr_sub = NULL; }
-    if (meta_sub)   { delwin(meta_sub);   meta_sub = NULL; }
-    if (main_win)   { delwin(main_win);   main_win = NULL; }
-
-    main_win = newwin(max_y - 2, max_x - 2, 1, 1);
-    main_panel = new_panel(main_win);
-
-    erase();
-    clearok(stdscr, TRUE);
-    refresh();
-}
-
 static void render_metadata_pane(WINDOW *win) {
     if (!win) return;
     werase(win);
@@ -158,22 +142,22 @@ static void render_metadata_pane(WINDOW *win) {
     mvwprintw(win, 0, 0, "  Player:   %s | %s", safe_str(m.player), safe_str(m.status));
     mvwprintw(win, 1, 0, "  Duration: %s ", m.length_str);
     wattroff(win, A_BOLD);
-    
+
     mvwprintw(win, 2, 0, "  Title:    %s", safe_str(m.title));
     wattron(win, COLOR_PAIR(2));
     mvwprintw(win, 3, 0, "  Artist:   %s", safe_str(m.artist));
     mvwprintw(win, 4, 0, "  Album:    %s", safe_str(m.album));
     wattroff(win, COLOR_PAIR(2));
-    
+
     mvwprintw(win, 5, 0, "  Genre:    %s", safe_str(m.genre));
     mvwprintw(win, 6, 0, "  Composer: %s", safe_str(m.composer));
-    
+
     wattron(win, A_DIM);
     char disp_url[1024];
     format_display_url(disp_url, m.file_path, sizeof(disp_url));
     mvwprintw(win, 7, 0, "  Source:   %s", disp_url);
     wattroff(win, A_DIM);
-    
+
     draw_help_text(win, 10, 0, false);
 
     wnoutrefresh(win);
@@ -197,39 +181,77 @@ static void render_lyrics_pane(WINDOW *win) {
     }
 }
 
+static void update_and_render_art(const char* current_art_source, const char* current_title_sig, int art_w, int art_h) {
+    bool source_changed = strcmp(current_art_source, last_art_path) != 0;
+    bool title_changed = strcmp(current_title_sig, last_title_sig) != 0;
+
+    DBG("Redrawing Art: %s", current_art_source);
+
+    render_art(3, 1, art_w, art_h);
+
+    strncpy(last_art_path, current_art_source, sizeof(last_art_path) - 1);
+    strncpy(last_title_sig, current_title_sig, sizeof(last_title_sig) - 1);
+}
+
+static void recreate_ui_components(int max_y, int max_x, 
+    const char* art_src, const char* title_sig, int w, int h) {
+    
+    DBG("Reconstructing UI components: %dx%d", max_x, max_y);
+
+    printf("\033[2J\033[H\033[0m"); 
+    fflush(stdout);
+
+    if (main_panel) { del_panel(main_panel); main_panel = NULL; }
+    if (lyr_sub)    { delwin(lyr_sub);    lyr_sub = NULL; }
+    if (meta_sub)   { delwin(meta_sub);   meta_sub = NULL; }
+    if (main_win)   { delwin(main_win);   main_win = NULL; }
+
+    resizeterm(max_y, max_x);
+    clearok(stdscr, TRUE);
+    erase();
+
+    main_win = newwin(max_y - 2, max_x - 2, 1, 1);
+    main_panel = new_panel(main_win);
+
+    refresh();
+
+    last_art_path[0] = '\0';
+    last_title_sig[0] = '\0';
+
+    update_and_render_art(art_src, title_sig, w, h);
+
+    last_w = max_x; 
+    last_h = max_y;
+    resize_pending = false;
+}
+
 void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
-    static char last_art_path[4096] = {0};
-    static char last_title_sig[2048] = {0};
-    static int last_w = 0, last_h = 0;
-    static bool last_player_active = false;
+
+    bool horizontal = (max_x > 90);
+    int safe_w = max_x - 2;
+    int safe_h = max_y - 2;
+    int art_w = horizontal ? (int)(safe_w * 0.4) : safe_w - 6;
+    int max_dim = horizontal ? 54 : 50;
+    if (art_w > max_dim) art_w = max_dim;
+    int art_h = art_w * 0.5;
 
     char *current_art_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     bool player_active = (m.status[0] != '\0' && strcmp(m.status, "Stopped") != 0);
-    
+
     char current_title_sig[2048];
     snprintf(current_title_sig, sizeof(current_title_sig), "%s%s", safe_str(m.title), safe_str(m.artist));
 
     bool is_resize = (max_x != last_w || max_y != last_h || resize_pending);
     bool is_new_track = (strcmp(current_art_source, last_art_path) != 0) || 
-                        (strcmp(current_title_sig, last_title_sig) != 0);
+        (strcmp(current_title_sig, last_title_sig) != 0);
     bool state_flipped = (player_active != last_player_active);
 
     if (is_resize || state_flipped || !main_win) {
-        recreate_ui_components(max_y, max_x);
-        
-        last_art_path[0] = '\0';
-        last_title_sig[0] = '\0';
-
-        extern bool force_art_redraw; 
-        force_art_redraw = true;
-        
-        last_w = max_x; 
-        last_h = max_y;
+        recreate_ui_components(max_y, max_x, current_art_source, current_title_sig, art_w, art_h);
         last_player_active = player_active;
-        resize_pending = false;
     }
 
     erase(); 
@@ -238,15 +260,6 @@ void draw_dashboard() {
     if (!player_active) {
         draw_fallback_screen(main_win, max_y - 2, max_x - 2);
     } else {
-        int safe_w = max_x - 2;
-        int safe_h = max_y - 2;
-        bool horizontal = (max_x > 90);
-
-        int art_w = horizontal ? (int)(safe_w * 0.4) : safe_w - 6;
-        int max_dim = horizontal ? 54 : 50;
-        if (art_w > max_dim) art_w = max_dim;
-        int art_h = art_w * 0.5;
-
         if (!meta_sub || !lyr_sub) {
             if (horizontal) {
                 int split = art_w + 6;
@@ -265,12 +278,7 @@ void draw_dashboard() {
         doupdate();
 
         if (is_new_track || is_resize) {
-            DBG("Redrawing Art: %s", current_art_source);
-            
-            render_art(3, 1, art_w, art_h);
-            
-            strncpy(last_art_path, current_art_source, sizeof(last_art_path) - 1);
-            strncpy(last_title_sig, current_title_sig, sizeof(last_title_sig) - 1);
+            update_and_render_art(current_art_source, current_title_sig, art_w, art_h);
         }
     }
 

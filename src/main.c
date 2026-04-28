@@ -129,65 +129,47 @@ int main() {
         FD_SET(STDIN_FILENO, &fds);
         FD_SET(pipe_fd, &fds);
 
-        struct timeval tv = {0, 100000}; 
+        struct timeval tv = {0, 50000};
         int activity = select(pipe_fd + 1, &fds, NULL, NULL, &tv);
 
-        if (activity < 0 && errno != EINTR) break;
+        if (activity < 0) {
+            if (errno == EINTR) {
+                continue; 
+            }
+            break;
+        }
 
-        while (1) {
-            fd_set fds;
-            FD_ZERO(&fds);
-            FD_SET(STDIN_FILENO, &fds);
-            FD_SET(pipe_fd, &fds);
-
-            struct timeval tv = {0, 100000}; 
-            int activity = select(pipe_fd + 1, &fds, NULL, NULL, &tv);
-
-            if (activity < 0 && errno != EINTR) break;
-
-            if (FD_ISSET(pipe_fd, &fds)) {
-                char chunk[8192];
-                ssize_t n = read(pipe_fd, chunk, sizeof(chunk) - 1);
-
-                if (n > 0) {
-                    chunk[n] = '\0';
-                    if (buf_idx + n < BUFFER_SIZE) {
-                        memcpy(poll_buffer + buf_idx, chunk, n);
-                        buf_idx += n;
-                        poll_buffer[buf_idx] = '\0';
-                        process_metadata_stream();
-                    }
-                } else if (n <= 0) {
-                    DBG("Pipe closed. Clearing metadata and reverting to fallback.");
-                    pclose(player_pipe);
-                    clear_metadata();
-                    draw_dashboard();
-
-                    player_pipe = popen(cmd, "r");
-                    pipe_fd = fileno(player_pipe);
+        if (FD_ISSET(pipe_fd, &fds)) {
+            char chunk[8192];
+            ssize_t n = read(pipe_fd, chunk, sizeof(chunk) - 1);
+            if (n > 0) {
+                chunk[n] = '\0';
+                if (buf_idx + n < BUFFER_SIZE) {
+                    memcpy(poll_buffer + buf_idx, chunk, n);
+                    buf_idx += n;
+                    poll_buffer[buf_idx] = '\0';
+                    process_metadata_stream();
                 }
-            }
-
-            if (FD_ISSET(STDIN_FILENO, &fds)) {
-                handle_keypress(getch());
-            }
-
-            if (resize_pending) {
+            } else if (n <= 0) {
+                pclose(player_pipe);
+                clear_metadata();
                 draw_dashboard();
-                resize_pending = false;
+                player_pipe = popen(cmd, "r");
+                pipe_fd = fileno(player_pipe);
             }
         }
 
         if (FD_ISSET(STDIN_FILENO, &fds)) {
-            handle_keypress(getch());
+            int ch;
+            while ((ch = getch()) != ERR) {
+                handle_keypress(ch);
+            }
         }
 
         if (resize_pending) {
             draw_dashboard();
             resize_pending = false;
         }
-
-        usleep(1000); 
     }
 
     handle_exit(0);
