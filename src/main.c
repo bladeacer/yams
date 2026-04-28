@@ -8,33 +8,30 @@
 #include <ncurses.h>
 #include <locale.h>
 #include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/prctl.h>
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
 #include "debug.h"
 
-FILE *log_file = NULL; 
-FILE *player_pipe = NULL;
-long last_poll_time = 0;
-long last_resize_time = 0;
-
 #define BUFFER_SIZE 262144
 static char poll_buffer[BUFFER_SIZE];
 static size_t buf_idx = 0;
+
+FILE *log_file = NULL; 
+int player_fd = -1;
+long last_resize_time = 0;
+static pid_t metadata_pid = -1;
 static pid_t ctrl_pid = -1;
 
 void handle_exit(int sig) {
     DBG("handle_exit called with signal %d", sig);
     
-    if (player_pipe) {
-        int pipe_fd = fileno(player_pipe);
-        close(pipe_fd); 
-    }
+    if (player_fd != -1) close(player_fd);
 
-    if (ctrl_pid > 0) {
-        kill(ctrl_pid, SIGTERM);
-        waitpid(ctrl_pid, NULL, WNOHANG);
-    }
+    if (metadata_pid > 0) kill(metadata_pid, SIGKILL);
+    if (ctrl_pid > 0) kill(ctrl_pid, SIGKILL);
 
     if (log_file) {
         DBG("Session ended. Closing log.");
@@ -42,6 +39,7 @@ void handle_exit(int sig) {
     }
 
     cleanup_ui(sig); 
+    exit(0);
 }
 
 void handle_winch(int sig) {
@@ -49,6 +47,43 @@ void handle_winch(int sig) {
     resize_pending = true;
     last_resize_time = get_ms();
     resizeterm(0, 0); 
+}
+
+pid_t spawn_playerctl(char **args, int *out_fd) {
+    int pipe_fds[2];
+    if (out_fd && pipe(pipe_fds) == -1) return -1;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+        
+        if (out_fd) {
+            close(pipe_fds[0]);
+            dup2(pipe_fds[1], STDOUT_FILENO);
+        } else {
+            int devnull = open("/dev/null", O_WRONLY);
+            dup2(devnull, STDOUT_FILENO);
+        }
+        
+        int devnull_err = open("/dev/null", O_WRONLY);
+        dup2(devnull_err, STDERR_FILENO);
+
+        execvp("playerctl", args);
+        _exit(1);
+    }
+
+    if (out_fd) {
+        close(pipe_fds[1]);
+        *out_fd = pipe_fds[0];
+    }
+    return pid;
+}
+
+void run_player_cmd(const char *action) {
+    if (ctrl_pid > 0 && waitpid(ctrl_pid, NULL, WNOHANG) == 0) return;
+
+    char *args[] = {"playerctl", (char *)action, NULL};
+    ctrl_pid = spawn_playerctl(args, NULL);
 }
 
 static void process_metadata_stream() {
@@ -77,31 +112,6 @@ static void process_metadata_stream() {
     if (updated) draw_dashboard();
 }
 
-void run_player_cmd(const char *action) {
-    // 1. Check if a previous command is still running
-    if (ctrl_pid > 0) {
-        int status;
-        // WNOHANG checks status without blocking
-        if (waitpid(ctrl_pid, &status, WNOHANG) == 0) {
-            DBG("Previous command %d still active. Skipping.", ctrl_pid);
-            return; 
-        }
-    }
-
-    ctrl_pid = fork();
-    if (ctrl_pid == 0) {
-        // Child process: redirect output to null to keep terminal clean
-        int devnull = open("/dev/null", O_WRONLY);
-        dup2(devnull, STDOUT_FILENO);
-        dup2(devnull, STDERR_FILENO);
-        
-        // Execute playerctl
-        char *args[] = {"playerctl", (char *)action, NULL};
-        execvp("playerctl", args);
-        _exit(1); // Should only reach here if exec fails
-    }
-}
-
 static void handle_keypress(int ch) {
     if (ch == ERR) return;
     
@@ -116,24 +126,17 @@ static void handle_keypress(int ch) {
 
         case 'r':
         case KEY_RESIZE:       
-            if (system("playerctl -l >/dev/null 2>&1") != 0) {
-                clear_metadata();
-            }
             resize_pending = true; 
             break;
-    }
-
-    if (cmd) {
-        system(cmd);
-        usleep(50000);
-        resize_pending = true;
     }
 }
 
 int main() {
     setlocale(LC_ALL, "");
+#ifndef NDEBUG
     log_file = fopen("yams.log", "a");
-    
+#endif
+
     signal(SIGINT,  handle_exit);
     signal(SIGTERM, handle_exit);
     signal(SIGWINCH, handle_winch);
@@ -148,33 +151,24 @@ int main() {
                       "LENGTH|{{mpris:length}}¶GENRE|{{xesam:genre}}¶COMPOSER|{{xesam:composer}}¶"
                       "ART|{{mpris:artUrl}}¶LYRICS|{{xesam:asText}}¶[[END]]¶";
 
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd), "playerctl metadata --follow --format '%s' 2>/dev/null", fmt);
+    char *meta_args[] = {"playerctl", "metadata", "--follow", "--format", (char*)fmt, NULL};
+    metadata_pid = spawn_playerctl(meta_args, &player_fd);
     
-    player_pipe = popen(cmd, "r");
-    if (!player_pipe) return 1;
-    
-    int pipe_fd = fileno(player_pipe);
-
     while (1) {
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(STDIN_FILENO, &fds);
-        FD_SET(pipe_fd, &fds);
+        if (player_fd != -1) FD_SET(player_fd, &fds);
 
         struct timeval tv = {0, 50000};
-        int activity = select(pipe_fd + 1, &fds, NULL, NULL, &tv);
+        int max_fd = (player_fd > STDIN_FILENO) ? player_fd : STDIN_FILENO;
+        int activity = select(max_fd + 1, &fds, NULL, NULL, &tv);
 
-        if (activity < 0) {
-            if (errno == EINTR) {
-                continue; 
-            }
-            break;
-        }
+        if (activity < 0 && errno != EINTR) break;
 
-        if (FD_ISSET(pipe_fd, &fds)) {
+        if (player_fd != -1 && FD_ISSET(player_fd, &fds)) {
             char chunk[8192];
-            ssize_t n = read(pipe_fd, chunk, sizeof(chunk) - 1);
+            ssize_t n = read(player_fd, chunk, sizeof(chunk) - 1);
             if (n > 0) {
                 chunk[n] = '\0';
                 if (buf_idx + n < BUFFER_SIZE) {
@@ -184,28 +178,30 @@ int main() {
                     process_metadata_stream();
                 }
             } else if (n <= 0) {
-                pclose(player_pipe);
+                close(player_fd);
+                kill(metadata_pid, SIGKILL);
+                waitpid(metadata_pid, NULL, 0);
+
                 clear_metadata();
                 draw_dashboard();
-                player_pipe = popen(cmd, "r");
-                pipe_fd = fileno(player_pipe);
+
+                metadata_pid = spawn_playerctl(meta_args, &player_fd);
             }
         }
 
         if (FD_ISSET(STDIN_FILENO, &fds)) {
             int ch;
-            while ((ch = getch()) != ERR) {
-                handle_keypress(ch);
-            }
+            while ((ch = getch()) != ERR) handle_keypress(ch);
         }
 
         if (resize_pending) {
             draw_dashboard();
             resize_pending = false;
         }
+
+        if (ctrl_pid > 0) waitpid(ctrl_pid, NULL, WNOHANG);
     }
 
     handle_exit(0);
-    if (ctrl_pid > 0) waitpid(ctrl_pid, NULL, WNOHANG);
     return 0;
 }
