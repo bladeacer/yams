@@ -37,12 +37,9 @@ void init_ui() {
         init_pair(1, COLOR_CYAN, -1);
         init_pair(2, COLOR_GREEN, -1);
         init_pair(3, 250, -1);
+        init_pair(4, COLOR_MAGENTA, -1);
     }
     DBG("Terminal initialized: %dx%d", COLS, LINES);
-}
-
-static const char* safe_str(const char* s) {
-    return (s && strlen(s) > 0) ? s : "Unknown";
 }
 
 void cleanup_ui(int sig) {
@@ -51,6 +48,10 @@ void cleanup_ui(int sig) {
     printf("\033[2J\033[H\033[?25h\033[0m");
     fflush(stdout);
     exit(0);
+}
+
+static const char* safe_str(const char* s) {
+    return (s && strlen(s) > 0) ? s : "Unknown";
 }
 
 static void format_display_url(char *dest, const char *src, size_t size) {
@@ -71,54 +72,57 @@ static void format_display_url(char *dest, const char *src, size_t size) {
     }
 }
 
-static void draw_help_text(WINDOW *win, int y, int x, bool fallback) {
-    int cur_y = y;
-    int cur_x = x;
+static void draw_item(WINDOW *win, const char* key, const char* desc, 
+        int *cy, int *cx, int x_orig, int max_h, int max_w) {
+    int len = strlen(key) + strlen(desc) + 4;
+    
+    if (*cx + len > max_w - 1) {
+        (*cy)++;
+        *cx = x_orig;
+    }
+    
+    if (*cy >= max_h) return;
 
-#define DRAW_KEY(key, desc) { \
-    wattron(win, A_REVERSE | A_BOLD); \
-    mvwprintw(win, cur_y, cur_x, " %s ", key); \
-    wattroff(win, A_REVERSE | A_BOLD); \
-    waddstr(win, " " desc "  "); \
-    cur_x = getcurx(win); \
+    wattron(win, A_REVERSE | A_BOLD);
+    mvwprintw(win, *cy, *cx, " %s ", key);
+    wattroff(win, A_REVERSE | A_BOLD);
+    
+    wattron(win, A_BOLD);
+    wprintw(win, " %s  ", desc);
+    wattroff(win, A_BOLD);
+    
+    *cx = getcurx(win);
 }
 
-    if (fallback) {
-        DRAW_KEY("q", "Quit");
-        DRAW_KEY("r", "Refresh");
-    } else {
-        DRAW_KEY("q", "Quit");
-        DRAW_KEY("r", "Refresh");
+static void draw_help_text(WINDOW *win, int y, int x) {
+    int cur_y = y;
+    int cur_x = x;
+    int max_h, max_w;
+    getmaxyx(win, max_h, max_w);
 
-        cur_y++; cur_x = x;
-        DRAW_KEY("SPC", "Play/Pause");
-
-        cur_y++; cur_x = x;
-        DRAW_KEY("h", "Prev");
-        DRAW_KEY("l", "Next");
-
-        wattron(win, A_DIM);
-        waddstr(win, "(Arrows supported)");
-        wattroff(win, A_DIM);
-    }
+    wattron(win, A_BOLD);
+    draw_item(win, "q", "Quit", &cur_y, &cur_x, x, max_h, max_w);
+    draw_item(win, "r", "Refresh", &cur_y, &cur_x, x, max_h, max_w);
+    draw_item(win, "?", "Help", &cur_y, &cur_x, x, max_h, max_w);
+    wattroff(win, A_BOLD);
 }
 
 static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     int mid_y = max_y / 2;
     int mid_x = max_x / 2;
 
-    wattron(win, COLOR_PAIR(1) | A_BOLD);
     const char* logo[] = {
-        " __   __  _   _  __  __  ____ ",
-        " \\ \\ / / / \\ | ||  \\/  |/ ___|",
-        "  \\ V / / _ \\| || |\\/| |\\___ \\",
-        "   | | / ___ \\ || |  | | ___) |",
-        "   |_|/_/   \\_\\_||_|  |_||____/ "
+        "██╗   ██╗ █████╗ ███╗   ███╗███████╗",
+        "╚██╗ ██╔╝██╔══██╗████╗ ████║██╔════╝",
+        " ╚████╔╝ ███████║██╔████╔██║███████╗",
+        "  ╚██╔╝  ██╔══██║██║╚██╔╝██║╚════██║",
+        "   ██║   ██║  ██║██║ ╚═╝ ██║███████║",
+        "   ╚═╝   ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝"
     };
     for(int i = 0; i < 5; i++) {
-        mvwprintw(win, mid_y - 6 + i, mid_x - 16, "%s", logo[i]);
+        mvwprintw(win, mid_y - 6 + i, mid_x - 18, "%s", logo[i]);
     }
-    wattroff(win, COLOR_PAIR(1) | A_BOLD);
+    wattroff(win, COLOR_PAIR(4) | A_BOLD);
 
     wattron(win, A_BOLD);
     const char* msg = "Awaiting Player Input...";
@@ -131,7 +135,7 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     mvwprintw(win, mid_y + 1, mid_x - (strlen(repo)/2), "%s", repo);
     wattroff(win, A_DIM);
 
-    draw_help_text(win, mid_y + 4, mid_x - 10, true);
+    draw_help_text(win, mid_y + 4, mid_x - 14);
 }
 
 static void render_metadata_pane(WINDOW *win) {
@@ -139,26 +143,25 @@ static void render_metadata_pane(WINDOW *win) {
     werase(win);
 
     wattron(win, COLOR_PAIR(1) | A_BOLD);
-    mvwprintw(win, 0, 0, "  Player:   %s | %s", safe_str(m.player), safe_str(m.status));
-    mvwprintw(win, 1, 0, "  Duration: %s ", m.length_str);
+    mvwprintw(win, 0, 0, "Player:   %s - %s", safe_str(m.player), safe_str(m.status));
+    mvwprintw(win, 1, 0, "Duration: %s ", m.length_str);
+    mvwprintw(win, 2, 0, "Title:    %s", safe_str(m.title));
     wattroff(win, A_BOLD);
 
-    mvwprintw(win, 2, 0, "  Title:    %s", safe_str(m.title));
     wattron(win, COLOR_PAIR(2));
-    mvwprintw(win, 3, 0, "  Artist:   %s", safe_str(m.artist));
-    mvwprintw(win, 4, 0, "  Album:    %s", safe_str(m.album));
+    mvwprintw(win, 3, 0, "Artist:   %s", safe_str(m.artist));
+    mvwprintw(win, 4, 0, "Album:    %s", safe_str(m.album));
+    mvwprintw(win, 5, 0, "Genre:    %s", safe_str(m.genre));
+    mvwprintw(win, 6, 0, "Composer: %s", safe_str(m.composer));
     wattroff(win, COLOR_PAIR(2));
-
-    mvwprintw(win, 5, 0, "  Genre:    %s", safe_str(m.genre));
-    mvwprintw(win, 6, 0, "  Composer: %s", safe_str(m.composer));
 
     wattron(win, A_DIM);
     char disp_url[1024];
     format_display_url(disp_url, m.file_path, sizeof(disp_url));
-    mvwprintw(win, 7, 0, "  Source:   %s", disp_url);
+    mvwprintw(win, 7, 0, "Source:   %s", disp_url);
     wattroff(win, A_DIM);
 
-    draw_help_text(win, 10, 0, false);
+    draw_help_text(win, 11, 0);
 
     wnoutrefresh(win);
 }
@@ -235,12 +238,12 @@ void draw_dashboard() {
 
 
     bool horizontal = (max_x > 90);
-    int safe_w = max_x - 2;
-    int safe_h = max_y - 2;
-    int art_w = horizontal ? (int)(safe_w * 0.4) : safe_w - 6;
+    int safe_w = max_x - 3;
+    int safe_h = max_y - 3;
+    int art_w = horizontal ? (int)(safe_w * 0.4) : safe_w - 8;
     int max_dim = horizontal ? 54 : 50;
     if (art_w > max_dim) art_w = max_dim;
-    int art_h = art_w * 0.5;
+    int art_h = horizontal ? (int)(safe_h * 0.6) : safe_h - 8;
 
     char *current_art_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     bool player_active = (m.status[0] != '\0' && strcmp(m.status, "Stopped") != 0);
@@ -254,29 +257,45 @@ void draw_dashboard() {
     bool state_flipped = (player_active != last_player_active);
 
     if (is_resize || state_flipped || !main_win) {
+        printf("\033[2J\033[H");
         recreate_ui_components(max_y, max_x, current_art_source, current_title_sig, art_w, art_h);
         last_player_active = player_active;
     }
 
-    erase(); 
     if (main_win) werase(main_win);
 
     if (!player_active) {
         draw_fallback_screen(main_win, max_y - 2, max_x - 2);
     } else {
+        if (is_resize && meta_sub) {
+            delwin(meta_sub); meta_sub = NULL;
+        }
+        if (is_resize && lyr_sub) {
+            delwin(lyr_sub);  lyr_sub = NULL;
+        }
+
         if (!meta_sub || !lyr_sub) {
+            int meta_h = 11;
+            int split_x = art_w + 6;
+
             if (horizontal) {
-                int split = art_w + 6;
-                meta_sub = derwin(main_win, 11, split - 4, art_h + 2, 2);
-                lyr_sub = derwin(main_win, safe_h, safe_w - split - 2, 0, split + 2);
+                // Meta sits under the Art on the left
+                meta_sub = derwin(main_win, safe_h - art_h - 2, split_x - 4, art_h + 2, 2);
+                // Lyrics takes the entire right side
+                lyr_sub = derwin(main_win, safe_h, safe_w - split_x - 1, 0, split_x + 1);
             } else {
-                meta_sub = derwin(main_win, 11, safe_w - 4, art_h + 2, 2);
-                lyr_sub = derwin(main_win, safe_h - art_h - 15, safe_w - 4, art_h + 14, 2);
+                // Vertical: Meta under Art, Lyrics under Meta
+                meta_sub = derwin(main_win, meta_h, safe_w - 4, art_h + 2, 2);
+                int lyr_y = art_h + meta_h + 3;
+                int lyr_h = safe_h - lyr_y;
+                if (lyr_h > 0) {
+                    lyr_sub = derwin(main_win, lyr_h, safe_w - 4, lyr_y, 2);
+                }
             }
         }
 
-        render_metadata_pane(meta_sub);
-        render_lyrics_pane(lyr_sub);
+        if (meta_sub) render_metadata_pane(meta_sub);
+        if (lyr_sub) render_lyrics_pane(lyr_sub);
 
         update_panels();
         doupdate();

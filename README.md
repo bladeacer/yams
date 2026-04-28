@@ -12,6 +12,7 @@ Yet another media status indicator/screensaver.
   - ASCII art (extracted from audio file/URL)
   - Lyrics (if available)
   - Play/Pause Next/Previous
+- Help Menu for keybinds
 - Refresh Button (if auto-refresh/polling does not work)
 
 ## Planned

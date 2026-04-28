@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <ncurses.h>
+#include <panel.h>
 #include <locale.h>
 #include <sys/wait.h>
 #include <sys/types.h>
@@ -112,22 +113,80 @@ static void process_metadata_stream() {
     if (updated) draw_dashboard();
 }
 
+void show_help_overlay() {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    int h = 14, w = 40;
+    int start_y = (max_y - h) / 2;
+    int start_x = (max_x - w) / 2;
+
+    WINDOW *help_win = newwin(h, w, start_y, start_x);
+    PANEL *help_panel = new_panel(help_win);
+    
+    wbkgd(help_win, COLOR_PAIR(3));
+    box(help_win, 0, 0);
+    
+    wattron(help_win, A_BOLD | COLOR_PAIR(4));
+    mvwprintw(help_win, 1, (w-10)/2, "YAMS HELP");
+    wattroff(help_win, A_BOLD | COLOR_PAIR(4));
+    mvwhline(help_win, 2, 1, ACS_HLINE, w-2);
+
+    int ty = 4, tx = 4;
+    #define HELP_L(k, d) { \
+        wattron(help_win, COLOR_PAIR(4) | A_BOLD); mvwprintw(help_win, ty, tx, k); \
+        wattroff(help_win, COLOR_PAIR(4) | A_BOLD); mvwprintw(help_win, ty++, tx + 6, d); \
+    }
+
+    HELP_L("q",     "Quit Application");
+    HELP_L("r",     "Force Refresh UI");
+    HELP_L("SPC",   "Play / Pause");
+    HELP_L("h/<-",  "Previous Track");
+    HELP_L("l/->",  "Next Track");
+    HELP_L("?",     "Show this help");
+    
+    wattron(help_win, A_DIM);
+    mvwprintw(help_win, h-2, tx, "Press any key to exit.");
+    wattroff(help_win, A_DIM);
+
+    update_panels();
+    doupdate();
+
+    nodelay(stdscr, FALSE);
+    wgetch(help_win);
+    nodelay(stdscr, TRUE);
+
+    del_panel(help_panel);
+    delwin(help_win);
+    resize_pending = true;
+}
+
+
 static void handle_keypress(int ch) {
     if (ch == ERR) return;
     
-    const char *cmd = NULL;
     switch (ch) {
-        case 'q': handle_exit(0); break;
-        case ' ': run_player_cmd("play-pause"); break;
+        case 'q':
+            handle_exit(0);
+            break;
+        case ' ':
+            run_player_cmd("play-pause");
+            break;
         case 'h':
-        case KEY_LEFT:  run_player_cmd("previous"); break;
+        case KEY_LEFT:
+            run_player_cmd("previous");
+            break;
         case 'l':
-        case KEY_RIGHT: run_player_cmd("next");     break;
-
+        case KEY_RIGHT:
+            run_player_cmd("next");
+            break;
         case 'r':
         case KEY_RESIZE:       
             resize_pending = true; 
             break;
+        case '?': 
+        default:
+            show_help_overlay(); break;
     }
 }
 
