@@ -1,5 +1,7 @@
 # yams
 
+![Screenshot](preview.webp)
+
 Yet another media screensaver.
 > Or status indicator
 
@@ -24,6 +26,9 @@ Yet another media screensaver.
 
 Needs programme restart.
 - Fallback mode check not triggered by refresh hotkey.
+
+When opened in tmux, switching focus away and then back means programme can only
+exit with `Ctrl + C` instead of `q`.
 
 ## Tested Media Players
 
