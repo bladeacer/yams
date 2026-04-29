@@ -89,29 +89,42 @@ void run_player_cmd(const char *action) {
 }
 
 static void process_metadata_stream() {
-    char *end_ptr;
-    bool updated = false;
+    char *last_end = NULL;
+    char *search_ptr = poll_buffer;
 
-    while ((end_ptr = strstr(poll_buffer, "[[END]]¶")) != NULL) {
-        size_t block_len = (end_ptr + 8) - poll_buffer;
-        
-        char saved = poll_buffer[block_len];
-        poll_buffer[block_len] = '\0';
-        
-        parse_block(poll_buffer);
-        updated = true;
-        
-        poll_buffer[block_len] = saved;
-
-        size_t remaining = buf_idx - block_len;
-        if (remaining > 0) {
-            memmove(poll_buffer, poll_buffer + block_len, remaining);
-        }
-        buf_idx = remaining;
-        poll_buffer[buf_idx] = '\0';
+    while (true) {
+        char *found = strstr(search_ptr, "[[END]]¶");
+        if (!found) break;
+        last_end = found;
+        search_ptr = found + 8;
     }
 
-    if (updated) draw_dashboard();
+    if (!last_end) return;
+
+    size_t block_end_idx = (last_end + 8) - poll_buffer;
+
+    char saved = poll_buffer[block_end_idx];
+    poll_buffer[block_end_idx] = '\0';
+
+    char *last_start = poll_buffer;
+    char *current_pos = poll_buffer;
+    while (current_pos < last_end) {
+        char *found_start = strstr(current_pos, "PLAYER|");
+        if (!found_start || found_start > last_end) break;
+        last_start = found_start;
+        current_pos = found_start + 7;
+    }
+
+    parse_block(last_start);
+    draw_dashboard();
+
+    poll_buffer[block_end_idx] = saved;
+    size_t remaining = buf_idx - block_end_idx;
+    if (remaining > 0) {
+        memmove(poll_buffer, poll_buffer + block_end_idx, remaining);
+    }
+    buf_idx = remaining;
+    poll_buffer[buf_idx] = '\0';
 }
 
 static void handle_keypress(int ch);
@@ -253,14 +266,42 @@ int main() {
             char chunk[8192];
             ssize_t n = read(player_fd, chunk, sizeof(chunk) - 1);
             if (n > 0) {
-                chunk[n] = '\0';
-                if (buf_idx + n < BUFFER_SIZE) {
-                    memcpy(poll_buffer + buf_idx, chunk, n);
-                    buf_idx += n;
-                    poll_buffer[buf_idx] = '\0';
-                    process_metadata_stream();
+                static bool skipping_art = false;
+
+                for (ssize_t i = 0; i < n; i++) {
+                    if (!skipping_art && buf_idx >= 14) {
+                        if (strncmp(poll_buffer + (buf_idx - 14), "ART|data:image", 14) == 0) {
+                            skipping_art = true;
+                            DBG("Massive ART detected: Dropping Base64 bytes...");
+                        }
+                    }
+
+                    if (skipping_art) {
+                        if ((unsigned char)chunk[i] == 0xC2 && i + 1 < n && (unsigned char)chunk[i+1] == 0xB6) {
+                            skipping_art = false;
+                            i++;
+
+                            if (buf_idx + 2 < BUFFER_SIZE) {
+                                poll_buffer[buf_idx++] = (char)0xC2;
+                                poll_buffer[buf_idx++] = (char)0xB6;
+                            }
+                            DBG("ART skip finished. Resuming ingestion.");
+                        }
+                        continue;
+                    }
+
+                    if (buf_idx < BUFFER_SIZE - 1) {
+                        poll_buffer[buf_idx++] = chunk[i];
+                    } else {
+                        DBG("Buffer overflow! Safety reset.");
+                        buf_idx = 0;
+                        break;
+                    }
                 }
-            } else if (n <= 0) {
+                poll_buffer[buf_idx] = '\0';
+                process_metadata_stream();
+            }
+            else if (n <= 0) {
                 close(player_fd);
                 kill(metadata_pid, SIGKILL);
                 waitpid(metadata_pid, NULL, 0);

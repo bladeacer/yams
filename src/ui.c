@@ -179,14 +179,18 @@ static void render_metadata_pane(WINDOW *win) {
 }
 
 static void render_lyrics_pane(WINDOW *win) {
+    if (!win) return;
     werase(win);
+    
     int h, w;
     getmaxyx(win, h, w);
 
     if (m.lyric_count > 0) {
         wattron(win, COLOR_PAIR(3));
         for (int i = 0; i < h && i < m.lyric_count; i++) {
-            mvwaddnstr(win, i, 0, m.lyrics[i], w);
+            if (m.lyrics[i]) {
+                mvwaddnstr(win, i, 0, m.lyrics[i], w);
+            }
         }
         wattroff(win, COLOR_PAIR(3));
     } else {
@@ -194,6 +198,7 @@ static void render_lyrics_pane(WINDOW *win) {
         mvwprintw(win, 2, 0, "  (No lyrics found)");
         wattroff(win, A_DIM);
     }
+    wnoutrefresh(win); 
 }
 
 static void update_and_render_art(const char* current_art_source, const char* current_title_sig, 
