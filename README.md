@@ -67,6 +67,8 @@ Built on the shoulders of giants.
 
 Linux.
 
+Should work on MacOS/WSL (untested).
+
 ## Setup
 
 Clone the repository, ensure you have listed dependencies on your system.

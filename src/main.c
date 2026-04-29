@@ -25,6 +25,7 @@ int player_fd = -1;
 long last_resize_time = 0;
 static pid_t metadata_pid = -1;
 static pid_t ctrl_pid = -1;
+static bool help_active = false;
 
 void handle_exit(int sig) {
     DBG("handle_exit called with signal %d", sig);
@@ -113,16 +114,48 @@ static void process_metadata_stream() {
     if (updated) draw_dashboard();
 }
 
+static void handle_keypress(int ch);
+void show_help_overlay(void);
+
+static void handle_keypress(int ch) {
+    if (ch == ERR) return;
+
+    DBG("Keystroke: ID=%d Char='%c'", ch, (ch >= 32 && ch <= 126) ? ch : '?');
+
+    switch (ch) {
+        case 'q': handle_exit(0); break;
+        case ' ': run_player_cmd("play-pause"); break;
+        case 'h':
+        case KEY_LEFT: run_player_cmd("previous"); break;
+        case 'l':
+        case KEY_RIGHT: run_player_cmd("next"); break;
+        case 'r': resize_pending = true; break;
+
+        case 27: case KEY_MOUSE: case KEY_PPAGE: case KEY_NPAGE:
+        case KEY_SR: case KEY_SF: case 259: case 258: case 410:
+            break;
+
+        case '?': 
+            if (!help_active) show_help_overlay(); 
+            break;
+
+        default:
+            if (!help_active && ch >= 32 && ch <= 126) {
+                show_help_overlay();
+            }
+            break;
+    }
+}
+
+
 void show_help_overlay() {
-    static bool is_active = false;
-    
-    if (is_active) return;
-    is_active = true;
+    if (help_active) return;
+    help_active = true;
 
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
-    int h = 14, w = 40;
+    int h = 16, w = 45;
     int start_y = (max_y - h) / 2;
     int start_x = (max_x - w) / 2;
 
@@ -137,10 +170,10 @@ void show_help_overlay() {
     wattroff(help_win, A_BOLD | COLOR_PAIR(4));
     mvwhline(help_win, 2, 1, ACS_HLINE, w-2);
 
-    int ty = 4, tx = 4;
+    int ty = 4, tx = 6;
     #define HELP_L(k, d) { \
         wattron(help_win, COLOR_PAIR(4) | A_BOLD); mvwprintw(help_win, ty, tx, k); \
-        wattroff(help_win, COLOR_PAIR(4) | A_BOLD); mvwprintw(help_win, ty++, tx + 6, d); \
+        wattroff(help_win, COLOR_PAIR(4) | A_BOLD); mvwprintw(help_win, ty++, tx + 8, d); \
     }
 
     HELP_L("q",     "Quit Application");
@@ -148,67 +181,37 @@ void show_help_overlay() {
     HELP_L("SPC",   "Play / Pause");
     HELP_L("h/<-",  "Previous Track");
     HELP_L("l/->",  "Next Track");
-    HELP_L("?",     "Show this help");
+    HELP_L("ESC/?", "Close this menu");
     
     wattron(help_win, A_DIM);
-    mvwprintw(help_win, h-2, tx, "Press any key to exit.");
+    mvwprintw(help_win, h-2, (w-26)/2, "Press ESC or ? to return");
     wattroff(help_win, A_DIM);
 
     update_panels();
     doupdate();
 
+    int ch;
     nodelay(stdscr, FALSE);
-    wgetch(help_win);
+    while (true) {
+        ch = wgetch(help_win);
+        
+        if (ch == 27 || ch == '?' || ch == 'q') {
+            if (ch == 'q') handle_exit(0);
+            break;
+        }
+
+        handle_keypress(ch);
+        
+        update_panels();
+        doupdate();
+    }
     nodelay(stdscr, TRUE);
 
     del_panel(help_panel);
     delwin(help_win);
     
     resize_pending = true;
-    
-    is_active = false;
-}
-
-
-static void handle_keypress(int ch) {
-    if (ch == ERR) return;
-    
-    switch (ch) {
-        case 'q':
-            handle_exit(0);
-            break;
-        case ' ':
-            run_player_cmd("play-pause");
-            break;
-        case 'h':
-        case KEY_LEFT:
-            run_player_cmd("previous");
-            break;
-        case 'l':
-        case KEY_RIGHT:
-            run_player_cmd("next");
-            break;
-        case 'r':
-        case KEY_RESIZE:       
-            resize_pending = true; 
-            break;
-
-        case 27:
-        case KEY_MOUSE:
-        case KEY_PPAGE:
-        case KEY_NPAGE:
-        case KEY_SR:
-        case KEY_SF:
-            break;
-        case '?': 
-            show_help_overlay();
-            break;
-        default:
-            if (ch >= 32 && ch <= 126) {
-                show_help_overlay();
-            }
-            break;
-    }
+    help_active = false;
 }
 
 int main() {
