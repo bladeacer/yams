@@ -35,9 +35,9 @@ void handle_exit(int sig) {
     if (metadata_pid > 0) kill(metadata_pid, SIGKILL);
     if (ctrl_pid > 0) kill(ctrl_pid, SIGKILL);
 
-    if (log_file) {
+    if (log_file) {;
         DBG("Session ended. Closing log.");
-        fclose(log_file);
+        close_debug();
     }
 
     cleanup_ui(sig); 
@@ -207,6 +207,10 @@ void show_help_overlay() {
     nodelay(stdscr, FALSE);
     while (true) {
         ch = wgetch(help_win);
+        if (ch == ERR) {
+            usleep(10000); 
+            continue;
+        }
         
         if (ch == 27 || ch == '?' || ch == 'q') {
             if (ch == 'q') handle_exit(0);
@@ -229,9 +233,8 @@ void show_help_overlay() {
 
 int main() {
     setlocale(LC_ALL, "");
-#ifndef NDEBUG
-    log_file = fopen("yams.log", "a");
-#endif
+
+    init_debug();
 
     signal(SIGINT,  handle_exit);
     signal(SIGTERM, handle_exit);
@@ -254,68 +257,86 @@ int main() {
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(STDIN_FILENO, &fds);
-        if (player_fd != -1) FD_SET(player_fd, &fds);
 
-        struct timeval tv = {0, 50000};
-        int max_fd = (player_fd > STDIN_FILENO) ? player_fd : STDIN_FILENO;
-        int activity = select(max_fd + 1, &fds, NULL, NULL, &tv);
-
-        if (activity < 0 && errno != EINTR) break;
-
-        if (player_fd != -1 && FD_ISSET(player_fd, &fds)) {
-            char chunk[8192];
-            ssize_t n = read(player_fd, chunk, sizeof(chunk) - 1);
-            if (n > 0) {
-                static bool skipping_art = false;
-
-                for (ssize_t i = 0; i < n; i++) {
-                    if (!skipping_art && buf_idx >= 14) {
-                        if (strncmp(poll_buffer + (buf_idx - 14), "ART|data:image", 14) == 0) {
-                            skipping_art = true;
-                            DBG("Massive ART detected: Dropping Base64 bytes...");
-                        }
-                    }
-
-                    if (skipping_art) {
-                        if ((unsigned char)chunk[i] == 0xC2 && i + 1 < n && (unsigned char)chunk[i+1] == 0xB6) {
-                            skipping_art = false;
-                            i++;
-
-                            if (buf_idx + 2 < BUFFER_SIZE) {
-                                poll_buffer[buf_idx++] = (char)0xC2;
-                                poll_buffer[buf_idx++] = (char)0xB6;
-                            }
-                            DBG("ART skip finished. Resuming ingestion.");
-                        }
-                        continue;
-                    }
-
-                    if (buf_idx < BUFFER_SIZE - 1) {
-                        poll_buffer[buf_idx++] = chunk[i];
-                    } else {
-                        DBG("Buffer overflow! Safety reset.");
-                        buf_idx = 0;
-                        break;
-                    }
-                }
-                poll_buffer[buf_idx] = '\0';
-                process_metadata_stream();
-            }
-            else if (n <= 0) {
-                close(player_fd);
-                kill(metadata_pid, SIGKILL);
-                waitpid(metadata_pid, NULL, 0);
-
-                clear_metadata();
-                draw_dashboard();
-
-                metadata_pid = spawn_playerctl(meta_args, &player_fd);
-            }
+        int max_fd = STDIN_FILENO;
+        if (player_fd != -1) {
+            FD_SET(player_fd, &fds);
+            if (player_fd > max_fd) max_fd = player_fd;
         }
 
-        if (FD_ISSET(STDIN_FILENO, &fds)) {
-            int ch;
-            while ((ch = getch()) != ERR) handle_keypress(ch);
+        struct timeval tv = {0, 100000}; 
+        
+        int activity = select(max_fd + 1, &fds, NULL, NULL, &tv);
+
+        if (activity < 0) {
+            if (errno == EINTR) continue;
+            break; 
+        }
+
+        if (activity > 0) {
+            if (player_fd != -1 && FD_ISSET(player_fd, &fds)) {
+                char chunk[8192];
+                ssize_t n = read(player_fd, chunk, sizeof(chunk) - 1);
+                
+                if (n > 0) {
+                    static bool skipping_art = false;
+                    for (ssize_t i = 0; i < n; i++) {
+                        if (!skipping_art && buf_idx >= 14) {
+                            if (strncmp(poll_buffer + (buf_idx - 14), "ART|data:image", 14) == 0) {
+                                skipping_art = true;
+                                DBG("Massive ART detected: Dropping Base64 bytes...");
+                            }
+                        }
+
+                        if (skipping_art) {
+                            if ((unsigned char)chunk[i] == 0xC2 && i + 1 < n && (unsigned char)chunk[i+1] == 0xB6) {
+                                skipping_art = false;
+                                i++;
+                                if (buf_idx + 2 < BUFFER_SIZE) {
+                                    poll_buffer[buf_idx++] = (char)0xC2;
+                                    poll_buffer[buf_idx++] = (char)0xB6;
+                                }
+                                DBG("ART skip finished. Resuming ingestion.");
+                            }
+                            continue;
+                        }
+
+                        if (buf_idx < BUFFER_SIZE - 1) {
+                            poll_buffer[buf_idx++] = chunk[i];
+                        } else {
+                            DBG("Buffer overflow! Safety reset.");
+                            buf_idx = 0;
+                            break;
+                        }
+                    }
+                    poll_buffer[buf_idx] = '\0';
+                    process_metadata_stream();
+                } 
+                else if (n <= 0) {
+                    close(player_fd);
+                    player_fd = -1;
+
+                    if (metadata_pid > 0) {
+                        kill(metadata_pid, SIGKILL);
+                        waitpid(metadata_pid, NULL, 0);
+                        metadata_pid = -1;
+                    }
+
+                    clear_metadata();
+                    resize_pending = true;
+
+                    DBG("Player lost. Throttling restart...");
+                    sleep(2); 
+                    metadata_pid = spawn_playerctl(meta_args, &player_fd);
+                }
+            }
+
+            if (FD_ISSET(STDIN_FILENO, &fds)) {
+                int ch;
+                while ((ch = getch()) != ERR) {
+                    handle_keypress(ch);
+                }
+            }
         }
 
         if (resize_pending) {
