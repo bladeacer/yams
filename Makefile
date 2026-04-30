@@ -2,9 +2,10 @@
 
 .DEFAULT_GOAL := help
 
-CYAN  := \033[36m
-GREEN := \033[32m
-RESET := \033[0m
+CYAN  := $(shell printf "\033[36m")
+GREEN := $(shell printf "\033[32m")
+RESET := $(shell printf "\033[0m")
+BOLD  := $(shell printf "\033[1m")
 ITERATIONS := 5
 SLEEP_TIME := 5
 
@@ -38,8 +39,19 @@ release: clean ## Build a stripped release binary and check size
 	@echo -n "Total disk usage: "
 	@du -h build/yams
 
-install: release ## Build release binary and install to system
+install: ## Build release binary and install to system
+	@echo "$(CYAN)Configuring optimized release build...$(RESET)"
+	@rm -rf build
+	@meson setup build --buildtype=release -Dstrip=true --optimization=s -Dc_args="-DNDEBUG"
+	@ninja -C build
+	@echo "$(GREEN)Installing to system...$(RESET)"
 	@sudo ninja -C build install
+	@# Verify that the installed binary doesn't have debug strings
+	@if strings $$(command -v yams) | grep -q "yams.log"; then \
+		echo "Warning: Installed binary still contains debug references!"; \
+	else \
+		echo "Success: Optimized binary installed."; \
+	fi
 
 uninstall: ## Remove yams from the system
 	@sudo rm -f /usr/local/bin/yams
@@ -66,28 +78,52 @@ bench-build:
 	@$(MAKE) bench-run RUN_NAME="$(BUILD_NAME)" BIN_PATH="$(BIN_PATH)"
 
 bench-run:
-	@echo "$(GREEN)Running $(ITERATIONS) samples of $(SLEEP_TIME)s each...$(RESET)"
+	@printf "\n$(CYAN)[%s Version]$(RESET)\n" "$(RUN_NAME)"
+	@printf "$(GREEN)Monitoring %d samples (%ds intervals)...$(RESET)\n" $(ITERATIONS) $(SLEEP_TIME)
 	@total_cpu=0; total_mem=0; count=0; \
 	for i in $$(seq 1 $(ITERATIONS)); do \
 		setsid $(BIN_PATH) > /dev/null 2>&1 & \
 		MYPID=$$!; \
-		sleep 1; # Warmup: let it finish forking/initializing \
+		sleep 2; # Let it settle \
 		\
-		# Take a 5-second sample using top's delta \
-		SAMPLE_CPU=$$(top -b -n 2 -d $(SLEEP_TIME) -p $$MYPID | grep $$MYPID | tail -n 1 | awk '{print $$9}'); \
-		SAMPLE_MEM=$$(ps -p $$MYPID -o rss= | awk '{print $$1/1024}'); \
+		# Get initial CPU ticks and uptime \
+		STAT1=$$(cat /proc/$$MYPID/stat 2>/dev/null); \
+		if [ -z "$$STAT1" ]; then continue; fi; \
+		UTIME1=$$(echo $$STAT1 | cut -d' ' -f14); \
+		STIME1=$$(echo $$STAT1 | cut -d' ' -f15); \
+		T1=$$(grep '^btime' /proc/stat | cut -d' ' -f2); \
+		UP1=$$(cat /proc/uptime | cut -d' ' -f1); \
 		\
+		sleep $(SLEEP_TIME); \
+		\
+		# Get final CPU ticks and uptime \
+		STAT2=$$(cat /proc/$$MYPID/stat 2>/dev/null); \
+		if [ -z "$$STAT2" ]; then kill -9 -$$MYPID 2>/dev/null; continue; fi; \
+		UTIME2=$$(echo $$STAT2 | cut -d' ' -f14); \
+		STIME2=$$(echo $$STAT2 | cut -d' ' -f15); \
+		UP2=$$(cat /proc/uptime | cut -d' ' -f1); \
+		\
+		# Memory (RSS) in MB \
+		SAMPLE_MEM=$$(echo $$STAT2 | cut -d' ' -f24); \
+		PAGE_SIZE=$$(getconf PAGESIZE); \
+		MEM_MB=$$(echo "scale=2; ($$SAMPLE_MEM * $$PAGE_SIZE) / 1048576" | bc); \
+		\
+		# Calculate CPU %: (delta_ticks / delta_time) / clk_tck \
+		DIFF=$$(echo "scale=4; $$UP2 - $$UP1" | bc); \
+		TICKS=$$(( (UTIME2 + STIME2) - (UTIME1 + STIME1) )); \
+		HZ=$$(getconf CLK_TCK); \
+		SAMPLE_CPU=$$(awk -v t="$$TICKS" -v h="$$HZ" -v d="$$DIFF" 'BEGIN { printf "%.2f", ((t/h)/d)*100 }'); \
 		kill -9 -$$MYPID > /dev/null 2>&1 || true; \
 		\
-		if [ ! -z "$$SAMPLE_CPU" ]; then \
-			echo "  Sample $$i: CPU $$SAMPLE_CPU%, MEM $$SAMPLE_MEM MB"; \
-			total_cpu=$$(echo "$$total_cpu + $$SAMPLE_CPU" | bc); \
-			total_mem=$$(echo "$$total_mem + $$SAMPLE_MEM" | bc); \
-			count=$$((count + 1)); \
-		fi; \
+		echo "  Sample $$i: CPU $$SAMPLE_CPU%, MEM $$MEM_MB MB"; \
+		total_cpu=$$(echo "$$total_cpu + $$SAMPLE_CPU" | bc); \
+		total_mem=$$(echo "$$total_mem + $$MEM_MB" | bc); \
+		count=$$((count + 1)); \
 	done; \
-	avg_cpu=$$(echo "scale=2; $$total_cpu / $$count" | bc); \
-	avg_mem=$$(echo "scale=2; $$total_mem / $$count" | bc); \
-	printf "\n$(BOLD)AVERAGE STATS (n=$$count):$(RESET)\n"; \
-	printf "  %-15s %s%%\n" "CPU Usage:" "$$avg_cpu"; \
-	printf "  %-15s %s MB\n" "Memory:" "$$avg_mem"
+	if [ $$count -gt 0 ]; then \
+		avg_cpu=$$(echo "scale=2; $$total_cpu / $$count" | bc); \
+		avg_mem=$$(echo "scale=2; $$total_mem / $$count" | bc); \
+		printf "\n$(BOLD)AVERAGE STATS (n=$$count):$(RESET)\n"; \
+		printf "  %-15s %s%%\n" "CPU Usage:" "$$avg_cpu"; \
+		printf "  %-15s %s MB\n" "Memory:" "$$avg_mem"; \
+	fi

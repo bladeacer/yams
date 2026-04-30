@@ -332,9 +332,19 @@ int main() {
             }
 
             if (FD_ISSET(STDIN_FILENO, &fds)) {
-                int ch;
-                while ((ch = getch()) != ERR) {
+                int ch = getch();
+                if (ch == ERR) {
+                    static int error_count = 0;
+                    if (++error_count > 10) {
+                        FD_CLR(STDIN_FILENO, &fds); 
+                        struct timespec ts = {0, 10000000};
+                        nanosleep(&ts, NULL);
+                    }
+                } else {
                     handle_keypress(ch);
+                    while ((ch = getch()) != ERR) {
+                        handle_keypress(ch);
+                    }
                 }
             }
         }
