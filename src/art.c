@@ -30,7 +30,7 @@ void render_art(int x, int y, int w, int h) {
             "-write mpr:img -delete 0 "
             "mpr:img -set option:avg '%%[pixel:p{0,0}]' "
             "-background '%%[avg]' -thumbnail %dx%d! -gravity center -extent %dx%d webp:- | " 
-            "jp2a -b --width=%d --height=%d --color-depth=24 - 2>/dev/null | sed 's/^/\\x1b[%dG/'", 
+            "jp2a -b --width=%d --height=%d --colors - 2>/dev/null | sed 's/^/\\x1b[%dG/'", 
             safe_path, 
             (int)(w * 1.5), h, 
             (int)(w * 1.5), h,

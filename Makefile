@@ -59,23 +59,42 @@ uninstall: ## Remove yams from the system
 logs: ## Check logs
 	@tail -f yams.log
 
-bench: ## Benchmark binary size, startup, memory, and CPU usage
-	@echo "$(CYAN)--- Starting Benchmark ---$(RESET)"
-	@pkill -9 yams || true
-	@pkill -9 playerctl || true
-	@$(MAKE) bench-build BUILD_NAME="Debug" BUILD_CMD="setup build --buildtype=debug" BIN_PATH="./build/yams"
-	@$(MAKE) bench-build BUILD_NAME="Release" BUILD_CMD="setup build --buildtype=release -Dstrip=true --optimization=s" BIN_PATH="./build/yams"
-	@if command -v yams >/dev/null; then \
-		$(MAKE) bench-run RUN_NAME="Installed" BIN_PATH="$$(command -v yams)"; \
-	else \
-		echo "Skipping Installed check (yams not in PATH)"; \
-	fi
-
 bench-build:
 	@rm -rf build
 	@meson $(BUILD_CMD) > /dev/null
 	@ninja -C build > /dev/null
 	@$(MAKE) bench-run RUN_NAME="$(BUILD_NAME)" BIN_PATH="$(BIN_PATH)"
+
+bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
+	@echo "$(CYAN)--- Starting Full Benchmark ---$(RESET)"
+	@pkill -9 yams || true
+	@pkill -9 playerctl || true
+	
+	@echo "\n$(CYAN)Step 1: Preparing Binaries...$(RESET)"
+	@# Build Debug
+	@rm -rf build-debug
+	@meson setup build-debug --buildtype=debug > /dev/null
+	@ninja -C build-debug > /dev/null
+	@# Build Release
+	@rm -rf build-release
+	@meson setup build-release --buildtype=release -Dstrip=true --optimization=s -Dc_args="-DNDEBUG" > /dev/null
+	@ninja -C build-release > /dev/null
+
+	@echo "\n$(CYAN)Step 2: Cold Start Speed (Hyperfine)$(RESET)"
+	@if command -v hyperfine >/dev/null; then \
+		YAMS_EXIT_IMMEDIATELY=1 hyperfine -N --warmup 10 --runs 100 \
+			'./build-debug/yams' \
+			'./build-release/yams'; \
+	else \
+		echo "Skipping: hyperfine not installed."; \
+	fi
+
+	@echo "\n$(CYAN)Step 3: Resource Efficiency (Idle Stats)$(RESET)"
+	@$(MAKE) bench-run RUN_NAME="Debug"   BIN_PATH="./build-debug/yams"
+	@$(MAKE) bench-run RUN_NAME="Release" BIN_PATH="./build-release/yams"
+	@if command -v yams >/dev/null; then \
+		$(MAKE) bench-run RUN_NAME="Installed" BIN_PATH="$$(command -v yams)"; \
+	fi
 
 bench-run:
 	@printf "\n$(CYAN)[%s Version]$(RESET)\n" "$(RUN_NAME)"
@@ -84,37 +103,26 @@ bench-run:
 	for i in $$(seq 1 $(ITERATIONS)); do \
 		setsid $(BIN_PATH) > /dev/null 2>&1 & \
 		MYPID=$$!; \
-		sleep 2; # Let it settle \
-		\
-		# Get initial CPU ticks and uptime \
+		sleep 2; \
 		STAT1=$$(cat /proc/$$MYPID/stat 2>/dev/null); \
 		if [ -z "$$STAT1" ]; then continue; fi; \
 		UTIME1=$$(echo $$STAT1 | cut -d' ' -f14); \
 		STIME1=$$(echo $$STAT1 | cut -d' ' -f15); \
-		T1=$$(grep '^btime' /proc/stat | cut -d' ' -f2); \
 		UP1=$$(cat /proc/uptime | cut -d' ' -f1); \
-		\
 		sleep $(SLEEP_TIME); \
-		\
-		# Get final CPU ticks and uptime \
 		STAT2=$$(cat /proc/$$MYPID/stat 2>/dev/null); \
 		if [ -z "$$STAT2" ]; then kill -9 -$$MYPID 2>/dev/null; continue; fi; \
 		UTIME2=$$(echo $$STAT2 | cut -d' ' -f14); \
 		STIME2=$$(echo $$STAT2 | cut -d' ' -f15); \
 		UP2=$$(cat /proc/uptime | cut -d' ' -f1); \
-		\
-		# Memory (RSS) in MB \
 		SAMPLE_MEM=$$(echo $$STAT2 | cut -d' ' -f24); \
 		PAGE_SIZE=$$(getconf PAGESIZE); \
 		MEM_MB=$$(echo "scale=2; ($$SAMPLE_MEM * $$PAGE_SIZE) / 1048576" | bc); \
-		\
-		# Calculate CPU %: (delta_ticks / delta_time) / clk_tck \
 		DIFF=$$(echo "scale=4; $$UP2 - $$UP1" | bc); \
 		TICKS=$$(( (UTIME2 + STIME2) - (UTIME1 + STIME1) )); \
 		HZ=$$(getconf CLK_TCK); \
 		SAMPLE_CPU=$$(awk -v t="$$TICKS" -v h="$$HZ" -v d="$$DIFF" 'BEGIN { printf "%.2f", ((t/h)/d)*100 }'); \
 		kill -9 -$$MYPID > /dev/null 2>&1 || true; \
-		\
 		echo "  Sample $$i: CPU $$SAMPLE_CPU%, MEM $$MEM_MB MB"; \
 		total_cpu=$$(echo "$$total_cpu + $$SAMPLE_CPU" | bc); \
 		total_mem=$$(echo "$$total_mem + $$MEM_MB" | bc); \

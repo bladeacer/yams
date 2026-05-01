@@ -234,6 +234,12 @@ void show_help_overlay() {
 int main() {
     setlocale(LC_ALL, "");
 
+    if (getenv("YAMS_EXIT_IMMEDIATELY")) {
+        init_ui();
+        cleanup_ui(0);
+        return 0;
+    }
+
     init_debug();
 
     signal(SIGINT,  handle_exit);
