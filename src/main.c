@@ -1,4 +1,3 @@
-#include <signal.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
@@ -11,6 +10,7 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <sys/prctl.h>
+#include <sys/ioctl.h>
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
@@ -49,7 +49,6 @@ void handle_winch(int sig) {
     (void)sig;
     resize_pending = true;
     last_resize_time = get_ms();
-    resizeterm(0, 0); 
 }
 
 pid_t spawn_playerctl(char **args, int *out_fd) {
@@ -287,8 +286,10 @@ static void handle_keypress(int ch) {
         case 'l':
         case KEY_RIGHT: run_player_cmd("next", NULL); break;
         case 'r':
+            DBG("Manual refresh requested");
             reset_art();
             resize_pending = true;
+            last_resize_time = get_ms() - 1000;
             break;
 
         case 's':
@@ -360,6 +361,10 @@ void show_help_overlay() {
     nodelay(stdscr, FALSE);
     while (true) {
         ch = wgetch(help_win);
+        if (resize_pending) {
+            break;
+        }
+
         if (ch == ERR) {
             usleep(10000); 
             continue;
@@ -419,11 +424,6 @@ int main() {
 
         int max_fd = STDIN_FILENO;
 
-        if (resize_pending) {
-            draw_dashboard();
-            resize_pending = false;
-        }
-
         if (ctrl_pid > 0) waitpid(ctrl_pid, NULL, WNOHANG);
 
         if (player_fd == -1 && (get_ms() - last_player_fail_ms > 2000)) {
@@ -440,6 +440,19 @@ int main() {
         struct timeval tv = {0, 100000}; 
         
         int activity = select(max_fd + 1, &fds, NULL, NULL, &tv);
+
+        if (resize_pending) {
+            long now = get_ms();
+            if (now - last_resize_time > 200) {
+                struct winsize size;
+                if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
+                    resizeterm(size.ws_row, size.ws_col);
+                }
+
+                draw_dashboard();
+                resize_pending = false;
+            }
+        }
 
         if (activity < 0) {
             if (errno == EINTR) continue;

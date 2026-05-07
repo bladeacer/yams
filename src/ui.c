@@ -146,7 +146,7 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
         "   ╚═╝   ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝"
     };
     for(int i = 0; i < 5; i++) {
-        mvwprintw(win, mid_y - 6 + i, mid_x - 19, "%s", logo[i]);
+        mvwprintw(win, mid_y - 6 + i, mid_x - 18, "%s", logo[i]);
     }
     const char* msg2 = "Awaiting Player Input...";
     mvwprintw(win, mid_y + 1, mid_x - (strlen(msg2)/2), "%s", msg2);
@@ -162,33 +162,73 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     mvwprintw(win, mid_y + 4, mid_x - (strlen(repo)/2), "%s", repo);
     wattroff(win, A_DIM);
 
-    draw_help_text(win, mid_y + 6, mid_x - 24);
+    draw_help_text(win, mid_y + 6, mid_x - 28);
+}
+
+static void draw_metadata_line(WINDOW *win, int *y, const char *label, const char *value, int color_pair, bool bold) {
+    int max_y, max_x;
+    getmaxyx(win, max_y, max_x);
+    
+    if (*y >= max_y) return;
+
+    int label_len = strlen(label);
+    
+    if (color_pair > 0) wattron(win, COLOR_PAIR(color_pair));
+    if (bold) wattron(win, A_BOLD);
+
+    mvwprintw(win, *y, 0, "%s", label);
+    
+    int val_x = label_len;
+    int available_w = max_x - val_x - 1;
+    
+    if (available_w <= 0) {
+        (*y)++;
+        goto cleanup;
+    }
+
+    const char *ptr = value;
+    while (*ptr && *y < max_y) {
+        mvwaddnstr(win, *y, val_x, ptr, available_w);
+        
+        int printed = strlen(ptr);
+        if (printed > available_w) {
+            ptr += available_w;
+            (*y)++;
+            val_x = label_len;
+        } else {
+            ptr += printed;
+            (*y)++;
+        }
+    }
+
+cleanup:
+    if (bold) wattroff(win, A_BOLD);
+    if (color_pair > 0) wattroff(win, COLOR_PAIR(color_pair));
 }
 
 static void render_metadata_pane(WINDOW *win) {
     if (!win) return;
     werase(win);
 
-    wattron(win, COLOR_PAIR(1) | A_BOLD);
-    mvwprintw(win, 0, 0, "Player:   %s - %s", safe_str(m.player), safe_str(m.status));
-    mvwprintw(win, 1, 0, "Duration: %s ", m.length_str);
-    mvwprintw(win, 2, 0, "Title:    %s", safe_str(m.title));
-    wattroff(win, A_BOLD);
+    int cur_y = 0;
+    char player_info[512];
+    snprintf(player_info, sizeof(player_info), "%s - %s", safe_str(m.player), safe_str(m.status));
 
-    wattron(win, COLOR_PAIR(2));
-    mvwprintw(win, 3, 0, "Artist:   %s", safe_str(m.artist));
-    mvwprintw(win, 4, 0, "Album:    %s", safe_str(m.album));
-    mvwprintw(win, 5, 0, "Genre:    %s", safe_str(m.genre));
-    mvwprintw(win, 6, 0, "Composer: %s", safe_str(m.composer));
-    wattroff(win, COLOR_PAIR(2));
+    draw_metadata_line(win, &cur_y, "Player:   ", player_info, 1, true);
+    draw_metadata_line(win, &cur_y, "Duration: ", m.length_str, 1, true);
+    draw_metadata_line(win, &cur_y, "Title:    ", safe_str(m.title), 1, true);
 
-    wattron(win, A_DIM);
+    draw_metadata_line(win, &cur_y, "Artist:   ", safe_str(m.artist), 2, false);
+    draw_metadata_line(win, &cur_y, "Album:    ", safe_str(m.album), 2, false);
+    draw_metadata_line(win, &cur_y, "Genre:    ", safe_str(m.genre), 2, false);
+    draw_metadata_line(win, &cur_y, "Composer: ", safe_str(m.composer), 2, false);
+
     char disp_url[1024];
     format_display_url(disp_url, m.file_path, sizeof(disp_url));
-    mvwprintw(win, 7, 0, "Source:   %s", disp_url);
-    wattroff(win, A_DIM);
+    draw_metadata_line(win, &cur_y, "Source:   ", disp_url, 0, false);
 
-    draw_help_text(win, 11, 0);
+    cur_y++; 
+    draw_help_text(win, cur_y, 0);
 
     wnoutrefresh(win);
 }
@@ -216,8 +256,10 @@ static void render_lyrics_pane(WINDOW *win) {
     wnoutrefresh(win); 
 }
 
-static void update_and_render_art(const char* current_art_source, const char* current_title_sig, 
-        int art_w, int art_h, bool force) {
+static void update_and_render_art(
+        const char* current_art_source, const char* current_title_sig, 
+        int art_w, int art_h, bool force
+        ) {
     
     if (!current_art_source || strlen(current_art_source) < 2) return;
 
@@ -241,6 +283,7 @@ static void recreate_ui_components(int max_y, int max_x) {
 
     resizeterm(max_y, max_x);
     
+    clearok(curscr, TRUE);
     erase(); 
     
     main_win = newwin(max_y - 2, max_x - 2, 1, 1);
@@ -255,30 +298,40 @@ static void recreate_ui_components(int max_y, int max_x) {
     resize_pending = false;
 }
 
+
 void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
-    bool horizontal = (max_x > 90);
-    int safe_w = max_x - 3;
-    int safe_h = max_y - 3;
-    int art_w = horizontal ? (int)(safe_w * 0.4) : safe_w - 8;
-    int max_dim = horizontal ? 54 : 50;
-    if (art_w > max_dim) art_w = max_dim;
-    int art_h = horizontal ? (int)(safe_h * 0.6) : safe_h - 8;
-
     char *current_art_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     bool player_active = (m.status[0] != '\0' && strcmp(m.status, "Stopped") != 0);
-
     char current_title_sig[2048];
     snprintf(current_title_sig, sizeof(current_title_sig), "%s%s", safe_str(m.title), safe_str(m.artist));
 
-    bool is_resize = (max_x != last_w || max_y != last_h || resize_pending);
-    bool is_new_track = (strcmp(current_art_source, last_art_path) != 0) || 
+    bool is_new_track = (strcmp(current_art_source, last_art_path) != 0) ||
         (strcmp(current_title_sig, last_title_sig) != 0);
+    bool force_redraw = (max_x != last_w || max_y != last_h || resize_pending);
 
-    if (is_resize || !main_win) {
+    if (force_redraw || !main_win) {
+        if (resize_pending) {
+            clear();
+        }
         recreate_ui_components(max_y, max_x);
+    }
+
+    bool horizontal = (max_x > 90);
+    int safe_w = max_x - 2;
+    int safe_h = max_y - 2;
+
+    int art_w, art_h;
+    if (horizontal) {
+        art_w = (int)(safe_w * 0.4);
+        if (art_w > 54) art_w = 54;
+        art_h = (int)(safe_h * 0.6);
+    } else {
+        art_w = safe_w - 4;
+        if (art_w > 50) art_w = 50;
+        art_h = (int)(safe_h * 0.4); 
     }
 
     if (main_win) werase(main_win);
@@ -286,29 +339,23 @@ void draw_dashboard() {
     if (!player_active) {
         draw_fallback_screen(main_win, max_y - 2, max_x - 2);
     } else {
-        if (is_resize && meta_sub) {
-            delwin(meta_sub); meta_sub = NULL;
-        }
-        if (is_resize && lyr_sub) {
-            delwin(lyr_sub);  lyr_sub = NULL;
+        if (force_redraw) {
+            if (meta_sub) { delwin(meta_sub); meta_sub = NULL; }
+            if (lyr_sub)  { delwin(lyr_sub);  lyr_sub = NULL; }
         }
 
         if (!meta_sub || !lyr_sub) {
-            int meta_h = 11;
-            int split_x = art_w + 6;
-
             if (horizontal) {
-                // Meta sits under the Art on the left
-                meta_sub = derwin(main_win, safe_h - art_h - 2, split_x - 4, art_h + 2, 2);
-                // Lyrics takes the entire right side
-                lyr_sub = derwin(main_win, safe_h, safe_w - split_x - 1, 0, split_x + 1);
+                int split_x = art_w + 4;
+                meta_sub = derwin(main_win, safe_h - art_h - 2, split_x - 2, art_h + 1, 1);
+                lyr_sub = derwin(main_win, safe_h - 1, safe_w - split_x - 1, 0, split_x + 1);
             } else {
-                // Vertical: Meta under Art, Lyrics under Meta
-                meta_sub = derwin(main_win, meta_h, safe_w - 4, art_h + 2, 2);
-                int lyr_y = art_h + meta_h + 3;
+                int meta_h = 11; 
+                meta_sub = derwin(main_win, meta_h, safe_w - 2, art_h + 1, 1);
+                int lyr_y = art_h + meta_h + 2;
                 int lyr_h = safe_h - lyr_y;
                 if (lyr_h > 0) {
-                    lyr_sub = derwin(main_win, lyr_h, safe_w - 4, lyr_y, 2);
+                    lyr_sub = derwin(main_win, lyr_h, safe_w - 2, lyr_y, 1);
                 }
             }
         }
@@ -321,7 +368,9 @@ void draw_dashboard() {
     doupdate();
 
     if (player_active) {
-        bool force = is_resize || is_new_track;
+        bool force = force_redraw || is_new_track;
         update_and_render_art(current_art_source, current_title_sig, art_w, art_h, force);
     }
+
+    resize_pending = false;
 }

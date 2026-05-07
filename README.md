@@ -17,13 +17,14 @@ Yet another media screensaver.
   - Play/Pause
   - Next/Previous
   - Seek Interval (go forward/backward by x seconds, can set amount)
-  - Set Preferred ASCII rendered (chafa/jp2a)
+  - Set Preferred ASCII renderer (`chafa` or `jp2a`)
 - Help Menu for keybinds
 - Refresh Button (if auto-refresh/polling does not work)
+- Window resize handling
 
 ## Planned
 
-- Rendering layout for smaller screens
+- Configuration file
 
 ## Known Issues
 
@@ -58,19 +59,16 @@ Built on the shoulders of giants.
 - ffmpeg (Extract image thumbnail from audio file)
 - imagemagick (Image processing)
 - [chafa](https://github.com/hpjansson/chafa) or
-[jp2a](https://github.com/cslarsen/jp2a) (ASCII renderer)
+[jp2a](https://github.com/cslarsen/jp2a) (ASCII renderer, prefer chafa by default)
 - sed (Regex replace)
 
 ### Dev Dependencies
 
-- GNU Make
-- meson
-- ninja
-
-#### Benchmarks
-
-- hyperfine
-- perf
+- GNU Make (build)
+- meson (build)
+- ninja (build)
+- hyperfine (benchmarking)
+- perf (benchmarking)
 
 ## Platform support
 
