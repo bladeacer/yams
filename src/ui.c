@@ -257,17 +257,19 @@ static void update_and_render_art(
     bool title_changed = strcmp(current_title_sig, last_title_sig) != 0;
     long now = get_ms();
 
-    if (force || source_changed || title_changed) {
+    if (art_pid > 0 && waitpid(art_pid, NULL, WNOHANG) != 0) {
+        art_pid = -1;
+    }
+
+    if (force || source_changed || title_changed || (art_pid == -1)) {
 
         if (!force && (now - last_metadata_change_time < ART_DEBOUNCE_MS)) {
             return; 
         }
 
         if (art_pid > 0) {
-            if (waitpid(art_pid, NULL, WNOHANG) == 0) {
-                kill(art_pid, SIGKILL);
-                waitpid(art_pid, NULL, 0);
-            }
+            kill(art_pid, SIGKILL);
+            waitpid(art_pid, NULL, 0);
             art_pid = -1;
         }
 

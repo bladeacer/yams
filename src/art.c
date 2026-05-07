@@ -36,7 +36,8 @@ pid_t render_art(int x, int y, int w, int h) {
 
     if (pid == 0) {
         char cmd[16384];
-        const char *tmp_raw = "/dev/shm/yams_proc.png";
+        char tmp_raw[256];
+        snprintf(tmp_raw, sizeof(tmp_raw), "/dev/shm/yams_art_%d.png", getpid());
         const char *jp2a_chars = "    ...',;:clodxkO0KXNWM";
 
         snprintf(cmd, sizeof(cmd), 
@@ -47,14 +48,14 @@ pid_t render_art(int x, int y, int w, int h) {
             char draw_cmd[16384];
             if (get_preferred_renderer() == 1) {
                 snprintf(draw_cmd, sizeof(draw_cmd),
-                        "magick \"%s\" -fuzz 10%% -trim +repage -thumbnail %dx%d! -gravity center -extent %dx%d jpg:- | "
-                        "jp2a --chars=\"%s\" --width=%d --height=%d --colors -",
+                        "magick \"%s\" -fuzz 10%% -trim +repage -thumbnail %dx%d! -gravity center -extent %dx%d jpg:- 2>/dev/null | "
+                        "jp2a --chars=\"%s\" --width=%d --height=%d --colors - 2>/dev/null",
                         tmp_raw, (int)(w * 1.5), h, (int)(w * 1.5), h, jp2a_chars, w, h);
             } else {
                 snprintf(draw_cmd, sizeof(draw_cmd),
-                        "magick \"%s\" -fuzz 10%% -trim +repage -thumbnail %dx%d! -gravity center -extent %dx%d jpg:- | "
+                        "magick \"%s\" -fuzz 10%% -trim +repage -thumbnail %dx%d! -gravity center -extent %dx%d jpg:- 2>/dev/null | "
                         "chafa --format symbols --symbols \"[%s]\" --fg-only --fill none --bg black --probe off "
-                        "-c 256 --optimize 0 --dither ordered --dither-intensity 0.3 --stretch --size %dx%d -",
+                        "-c 256 --optimize 0 --dither ordered --dither-intensity 0.3 --stretch --size %dx%d - 2>/dev/null",
                         tmp_raw, (int)(w * 1.5), h, (int)(w * 1.5), h, jp2a_chars, w, h);
             }
 
