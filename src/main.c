@@ -18,6 +18,7 @@
 #include "debug.h"
 
 #define BUFFER_SIZE 131072
+#define ART_DEBOUNCE_MS 200
 static char poll_buffer[BUFFER_SIZE];
 static size_t buf_idx = 0;
 
@@ -434,9 +435,6 @@ int main() {
     init_ui();
     nodelay(stdscr, TRUE);
 
-    /* buf_idx = 0; */
-    /* memset(poll_buffer, 0, BUFFER_SIZE); */
-
     const char *fmt = "PLAYER|{{playerName}}#STATUS|{{status}}#TITLE|{{xesam:title}}#"
         "ARTIST|{{xesam:artist}}#ALBUM|{{xesam:album}}#PATH|{{xesam:url}}#"
         "LENGTH|{{mpris:length}}#GENRE|{{xesam:genre}}#COMPOSER|{{xesam:composer}}#"
@@ -463,13 +461,14 @@ int main() {
         maintain_subprocesses(meta_args, now);
 
         struct timeval tv;
-        long time_since_draw = now - last_draw_time;
+        long elapsed_since_change = now - get_last_metadata_change_time();
 
-        if (resize_pending) {
-            long wait_time = 50 - time_since_draw;
-            if (wait_time < 0) wait_time = 0;
+        if (elapsed_since_change < ART_DEBOUNCE_MS) {
             tv.tv_sec = 0;
-            tv.tv_usec = wait_time * 1000;
+            tv.tv_usec = 50000;
+        } else if (resize_pending) {
+            tv.tv_sec = 0;
+            tv.tv_usec = 10000; 
         } else {
             tv.tv_sec = 1;
             tv.tv_usec = 0;
@@ -493,6 +492,7 @@ int main() {
         }
 
         if (resize_pending) {
+            long now = get_ms();
             if (now - last_draw_time > 50) {
                 struct winsize size;
                 if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
@@ -504,6 +504,8 @@ int main() {
                 resize_pending = false;
             }
         }
+
+        usleep(10000);
     }
 
     draw_dashboard();

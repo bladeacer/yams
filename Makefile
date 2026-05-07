@@ -31,11 +31,19 @@ run: ## Run compiled binary (Clean & Debug)
 	$(MAKE) build
 	./build/yams
 
+diff: ## Writes output of git diff HEAD~0 to diff.txt
+	git diff HEAD~0 > diff.txt
+
 clean: ## Remove build directory
 	@rm -rf build
 
 release: clean ## Build a stripped release binary and check size
-	@meson setup build --buildtype=release -Dstrip=true --optimization=3 -Dc_args="-DNDEBUG"
+	@meson setup build \
+		--buildtype=release \
+		--optimization=3 \
+		-Db_lto=true \
+		-Dstrip=true \
+		-Dc_args="-DNDEBUG -march=native -fno-plt"
 	@ninja -C build
 	@echo ""
 	@echo "\033[32m--- Binary Info ---\033[0m"
@@ -46,7 +54,13 @@ release: clean ## Build a stripped release binary and check size
 install: ## Build release binary and install to system
 	@echo "$(CYAN)Configuring optimized release build...$(RESET)"
 	@rm -rf build
-	@meson setup build --buildtype=release -Dstrip=true --optimization=s -Dc_args="-DNDEBUG"
+	@meson setup build \
+		--buildtype=release \
+		--optimization=3 \
+		-Db_lto=true \
+		-Dstrip=true \
+		-Dc_args="-DNDEBUG -march=native -fno-plt"
+	@ninja -C build
 	@ninja -C build
 	@echo "$(GREEN)Installing to system...$(RESET)"
 	@sudo ninja -C build install

@@ -64,12 +64,14 @@ Built on the shoulders of giants.
 
 ### Dev Dependencies
 
+- Git
 - GNU Make (build)
 - meson (build)
 - ninja (build)
 - hyperfine (benchmarking)
 - perf (benchmarking)
-- awk (benchmarking)
+- strace
+- awk
 
 ## Platform support
 

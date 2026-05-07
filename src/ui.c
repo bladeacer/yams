@@ -4,12 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include "ui.h"
 #include "metadata.h"
 #include "art.h"
 #include "utils.h"
 #include "debug.h"
 
+#define ART_DEBOUNCE_MS 200
 bool resize_pending = false;
 
 static WINDOW *main_win = NULL;
@@ -21,6 +24,14 @@ static int last_w = 0;
 static int last_h = 0;
 static char last_art_path[4096] = {0};
 static char last_title_sig[2048] = {0};
+static long last_metadata_change_time = 0;
+static pid_t art_pid = -1;
+
+long get_last_metadata_change_time(void);
+
+long get_last_metadata_change_time(void) {
+    return last_metadata_change_time;
+}
 
 void reset_art() {
     last_art_path[0] = '\0';
@@ -54,6 +65,7 @@ void init_ui() {
         init_pair(3, 250, -1);
         init_pair(4, COLOR_MAGENTA, -1);
     }
+    last_metadata_change_time = get_ms();
     DBG("Terminal initialized: %dx%d", COLS, LINES);
 }
 
@@ -243,9 +255,23 @@ static void update_and_render_art(
 
     bool source_changed = strcmp(current_art_source, last_art_path) != 0;
     bool title_changed = strcmp(current_title_sig, last_title_sig) != 0;
+    long now = get_ms();
 
     if (force || source_changed || title_changed) {
-        render_art(3, 1, art_w, art_h);
+
+        if (!force && (now - last_metadata_change_time < ART_DEBOUNCE_MS)) {
+            return; 
+        }
+
+        if (art_pid > 0) {
+            if (waitpid(art_pid, NULL, WNOHANG) == 0) {
+                kill(art_pid, SIGKILL);
+                waitpid(art_pid, NULL, 0);
+            }
+            art_pid = -1;
+        }
+
+        art_pid = render_art(3, 1, art_w, art_h); 
 
         strncpy(last_art_path, current_art_source, sizeof(last_art_path) - 1);
         strncpy(last_title_sig, current_title_sig, sizeof(last_title_sig) - 1);
@@ -294,7 +320,19 @@ void draw_dashboard() {
     bool size_changed = (max_x != last_w || max_y != last_h);
     bool force_redraw = (size_changed || resize_pending || first_run);
 
-    if (!metadata_changed && !force_redraw) return;
+    bool track_identity_changed = strcmp(m.title, last_m.title) != 0 || 
+                                  strcmp(m.artist, last_m.artist) != 0;
+
+    if (track_identity_changed) {
+        last_metadata_change_time = get_ms();
+    }
+
+    if (!metadata_changed && !force_redraw) {
+        long elapsed = get_ms() - last_metadata_change_time;
+        if (elapsed < ART_DEBOUNCE_MS || elapsed > ART_DEBOUNCE_MS + 500) {
+            return;
+        }
+    }
 
     if (max_x != last_w || max_y != last_h || first_run) {
         recreate_ui_components(max_y, max_x);
@@ -359,9 +397,9 @@ void draw_dashboard() {
     doupdate();
 
     if (player_active) {
-        bool force = force_redraw || metadata_changed;
-        update_and_render_art(current_art_source, current_title_sig, art_w, art_h, force);
+            update_and_render_art(current_art_source, current_title_sig, art_w, art_h, force_redraw);
     }
 
+    last_m = m;
     resize_pending = false;
 }
