@@ -80,6 +80,16 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 	@meson setup build-release --buildtype=release -Dstrip=true --optimization=s -Dc_args="-DNDEBUG" > /dev/null
 	@ninja -C build-release > /dev/null
 
+	@printf "\n$(CYAN)Step 1.5: Binary Footprint (Disk Usage)$(RESET)\n"
+	@printf "  %-15s %s\n" "Debug Build:" "$$(du -h ./build-debug/yams | cut -f1)"
+	@printf "  %-15s %s\n" "Release Build:" "$$(du -h ./build-release/yams | cut -f1)"
+	@if command -v strip >/dev/null; then \
+		cp ./build-release/yams ./yams-stripped; \
+		strip ./yams-stripped; \
+		printf "  %-15s %s\n" "Fully Stripped:" "$$(du -h ./yams-stripped | cut -f1)"; \
+		rm ./yams-stripped; \
+	fi
+
 	@printf "\n$(CYAN)Step 2: Cold Start Speed (Hyperfine)$(RESET)\n"
 	@if command -v hyperfine >/dev/null; then \
 		YAMS_EXIT_IMMEDIATELY=1 hyperfine -N --warmup 10 --runs 100 \
@@ -94,6 +104,16 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 	@$(MAKE) bench-run RUN_NAME="Release" BIN_PATH="./build-release/yams"
 	@if command -v yams >/dev/null; then \
 		$(MAKE) bench-run RUN_NAME="Installed" BIN_PATH="$$(command -v yams)"; \
+	fi
+
+	@printf "\n$(CYAN)Step 4: Linux Perf Analysis (Release Build)$(RESET)\n"
+	@if command -v perf >/dev/null; then \
+		setsid ./build-release/yams > /dev/null 2>&1 & \
+		YPID=$$!; sleep 1; \
+		perf stat -p $$YPID -- sleep 5; \
+		kill -9 -$$YPID > /dev/null 2>&1 || true; \
+	else \
+		echo "Skipping: perf not installed."; \
 	fi
 
 bench-run:

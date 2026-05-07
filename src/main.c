@@ -137,6 +137,44 @@ static void process_metadata_stream() {
     poll_buffer[buf_idx] = '\0';
 }
 
+void show_seek_input() {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    int h = 3, w = 30;
+    int sy = (max_y - h) / 2;
+    int sx = (max_x - w) / 2;
+
+    WINDOW *swin = newwin(h, w, sy, sx);
+    PANEL *spanel = new_panel(swin);
+    
+    wbkgd(swin, COLOR_PAIR(3));
+    box(swin, 0, 0);
+    mvwprintw(swin, 0, 2, " Set Seek (sec) ");
+    wmove(swin, 1, 2);
+    
+    update_panels();
+    doupdate();
+
+    echo();
+    curs_set(1);
+    char input[10];
+    wgetnstr(swin, input, sizeof(input) - 1);
+    noecho();
+    curs_set(0);
+
+    int val = atoi(input);
+    if (val > 0) {
+        set_seek_interval(val);
+        DBG("Seek interval updated to %ds via overlay", val);
+    }
+
+    del_panel(spanel);
+    delwin(swin);
+    resize_pending = true;
+}
+
+
 static void handle_keypress(int ch);
 void show_help_overlay(void);
 
@@ -172,6 +210,10 @@ static void handle_keypress(int ch) {
         case 'l':
         case KEY_RIGHT: run_player_cmd("next", NULL); break;
         case 'r': resize_pending = true; break;
+
+        case 's':
+            show_seek_input();
+            break;
 
         case 27: case KEY_MOUSE: case KEY_PPAGE: case KEY_NPAGE:
         case KEY_SR: case KEY_SF: case 259: case 258: case 410:
@@ -224,6 +266,7 @@ void show_help_overlay() {
     HELP_L("l/->",  "Next Track");
     HELP_L("j/k",   "Seek Interval");
     HELP_L("-/+",   "Adjust Seek Interval");
+    HELP_L("s",     "Set Seek Interval");
     HELP_L("ESC/?", "Close this menu");
 
     wattron(help_win, A_DIM);

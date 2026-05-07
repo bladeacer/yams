@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+// TODO: Move externs to getters/setters
+
 extern bool resize_pending;
 extern int scroll_pos;
 

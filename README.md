@@ -65,6 +65,11 @@ Built on the shoulders of giants.
 - meson
 - ninja
 
+#### Benchmarks
+
+- hyperfine
+- perf
+
 ## Platform support
 
 Linux.
