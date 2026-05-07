@@ -210,6 +210,39 @@ void show_seek_input() {
     resize_pending = true;
 }
 
+void show_renderer_selection() {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int h = 5, w = 35;
+    int sy = (max_y - h) / 2;
+    int sx = (max_x - w) / 2;
+
+    WINDOW *awin = newwin(h, w, sy, sx);
+    PANEL *apanel = new_panel(awin);
+    wbkgd(awin, COLOR_PAIR(3));
+    box(awin, 0, 0);
+    mvwprintw(awin, 0, 2, " Select Art Renderer ");
+    mvwprintw(awin, 1, 2, "[0] Chafa (Default)");
+    mvwprintw(awin, 2, 2, "[1] jp2a");
+    mvwprintw(awin, 3, 2, "Choice: ");
+
+    update_panels();
+    doupdate();
+
+    echo();
+    curs_set(1);
+    char input = mvwgetch(awin, 3, 10);
+    noecho();
+    curs_set(0);
+
+    if (input == '1') set_preferred_renderer(1);
+    else if (input == '0') set_preferred_renderer(0);
+
+    del_panel(apanel);
+    delwin(awin);
+    resize_pending = true;
+}
+
 static void handle_keypress(int ch);
 void show_help_overlay(void);
 
@@ -230,6 +263,9 @@ static void handle_keypress(int ch) {
         case 'k':
             snprintf(seek_cmd, sizeof(seek_cmd), "%d+", get_seek_interval());
             run_player_cmd("position", seek_cmd);
+            break;
+        case 'a':
+            show_renderer_selection();
             break;
         case '+':
             set_seek_interval(get_seek_interval() + 5);

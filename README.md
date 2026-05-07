@@ -17,6 +17,7 @@ Yet another media screensaver.
   - Play/Pause
   - Next/Previous
   - Seek Interval (go forward/backward by x seconds, can set amount)
+  - Set Preferred ASCII rendered (chafa/jp2a)
 - Help Menu for keybinds
 - Refresh Button (if auto-refresh/polling does not work)
 
@@ -55,8 +56,9 @@ Built on the shoulders of giants.
 - ncurses (TUI)
 - [playerctl](https://github.com/altdesktop/playerctl)
 - ffmpeg (Extract image thumbnail from audio file)
-- imagemagick (Convert to WEBP, used so jp2a handles image scaling better)
-- jp2a (JPG/WEBP to ASCII)
+- imagemagick (Image processing)
+- [chafa](https://github.com/hpjansson/chafa) or
+[jp2a](https://github.com/cslarsen/jp2a) (ASCII renderer)
 - sed (Regex replace)
 
 ### Dev Dependencies

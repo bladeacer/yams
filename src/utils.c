@@ -85,3 +85,13 @@ void set_seek_interval(int seconds) {
     if (seconds > 60) seconds = 60;
     seek_interval = seconds;
 }
+
+static int preferred_renderer = 0;
+
+int get_preferred_renderer(void) {
+    return preferred_renderer;
+}
+
+void set_preferred_renderer(int type) {
+    preferred_renderer = type;
+}
