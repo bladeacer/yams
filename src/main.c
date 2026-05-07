@@ -26,6 +26,7 @@ long last_resize_time = 0;
 static pid_t metadata_pid = -1;
 static pid_t ctrl_pid = -1;
 static bool help_active = false;
+static long last_player_fail_ms = 0;
 
 void handle_exit(int sig) {
     DBG("handle_exit called with signal %d", sig);
@@ -126,7 +127,7 @@ static void process_metadata_stream() {
     }
 
     parse_block(last_start);
-    draw_dashboard();
+    resize_pending = true;
 
     poll_buffer[block_end_idx] = saved;
     size_t remaining = buf_idx - block_end_idx;
@@ -151,29 +152,63 @@ void show_seek_input() {
     wbkgd(swin, COLOR_PAIR(3));
     box(swin, 0, 0);
     mvwprintw(swin, 0, 2, " Set Seek (sec) ");
-    wmove(swin, 1, 2);
+    
+    keypad(swin, TRUE);
+    nodelay(swin, FALSE); 
+    curs_set(1);
     
     update_panels();
     doupdate();
 
-    echo();
-    curs_set(1);
-    char input[10];
-    wgetnstr(swin, input, sizeof(input) - 1);
-    noecho();
-    curs_set(0);
+    char input[10] = {0};
+    int idx = 0;
+    const int field_x = 2;
+    const int field_y = 1;
 
-    int val = atoi(input);
-    if (val > 0) {
-        set_seek_interval(val);
-        DBG("Seek interval updated to %ds via overlay", val);
+    while (true) {
+        wmove(swin, field_y, field_x + idx);
+        int ch = wgetch(swin);
+
+        if (ch == 27) {
+            idx = 0; 
+            break; 
+        }
+        
+        if (ch == '\n' || ch == KEY_ENTER) {
+            break;
+        }
+
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+            if (idx > 0) {
+                idx--;
+                input[idx] = '\0';
+                mvwaddch(swin, field_y, field_x + idx, ' ');
+            }
+        } 
+        else if (ch >= '0' && ch <= '9' && idx < (int)sizeof(input) - 1) {
+            input[idx] = ch;
+            mvwaddch(swin, field_y, field_x + idx, ch);
+            idx++;
+            input[idx] = '\0';
+        }
+        
+        wrefresh(swin);
     }
 
+    curs_set(0);
     del_panel(spanel);
     delwin(swin);
+    
+    update_panels();
+    doupdate();
+
+    if (idx > 0) {
+        int val = atoi(input);
+        if (val > 0) set_seek_interval(val);
+    }
+
     resize_pending = true;
 }
-
 
 static void handle_keypress(int ch);
 void show_help_overlay(void);
@@ -338,6 +373,20 @@ int main() {
         FD_SET(STDIN_FILENO, &fds);
 
         int max_fd = STDIN_FILENO;
+
+        if (resize_pending) {
+            draw_dashboard();
+            resize_pending = false;
+        }
+
+        if (ctrl_pid > 0) waitpid(ctrl_pid, NULL, WNOHANG);
+
+        if (player_fd == -1 && (get_ms() - last_player_fail_ms > 2000)) {
+            DBG("Attempting playerctl restart...");
+            metadata_pid = spawn_playerctl(meta_args, &player_fd);
+            last_player_fail_ms = get_ms(); 
+        }
+
         if (player_fd != -1) {
             FD_SET(player_fd, &fds);
             if (player_fd > max_fd) max_fd = player_fd;
@@ -404,9 +453,8 @@ int main() {
                     clear_metadata();
                     resize_pending = true;
 
-                    DBG("Player lost. Throttling restart...");
-                    sleep(2); 
-                    metadata_pid = spawn_playerctl(meta_args, &player_fd);
+                    last_player_fail_ms = get_ms();
+                    DBG("Player connection lost.");
                 }
             }
 
@@ -428,12 +476,6 @@ int main() {
             }
         }
 
-        if (resize_pending) {
-            draw_dashboard();
-            resize_pending = false;
-        }
-
-        if (ctrl_pid > 0) waitpid(ctrl_pid, NULL, WNOHANG);
     }
 
     handle_exit(0);

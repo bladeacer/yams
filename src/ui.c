@@ -25,6 +25,7 @@ static bool last_player_active = false;
 
 void init_ui() {
     initscr();
+    set_escdelay(25);
     cbreak();
     noecho();
     noqiflush();
@@ -113,13 +114,16 @@ static void draw_help_text(WINDOW *win, int y, int x) {
     wattron(win, A_BOLD);
     draw_item(win, "q", "Quit", &cur_y, &cur_x, x, max_h, max_w);
     draw_item(win, "r", "Refresh", &cur_y, &cur_x, x, max_h, max_w);
-
-    char seek_str[16];
-    snprintf(seek_str, sizeof(seek_str), "Interval:%ds", get_seek_interval());
-    draw_item(win, "-/+", seek_str, &cur_y, &cur_x, x, max_h, max_w);
-
     draw_item(win, "?", "Help", &cur_y, &cur_x, x, max_h, max_w);
     wattroff(win, A_BOLD);
+
+    char seek_str[16];
+
+    wattron(win, A_BOLD);
+    snprintf(seek_str, sizeof(seek_str), "Interval: %ds", get_seek_interval());
+    draw_item(win, "-/+", seek_str, &cur_y, &cur_x, x, max_h, max_w);
+    wattroff(win, A_BOLD);
+
 }
 
 static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
@@ -152,7 +156,7 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     mvwprintw(win, mid_y + 4, mid_x - (strlen(repo)/2), "%s", repo);
     wattroff(win, A_DIM);
 
-    draw_help_text(win, mid_y + 6, mid_x - 15);
+    draw_help_text(win, mid_y + 6, mid_x - 24);
 }
 
 static void render_metadata_pane(WINDOW *win) {
