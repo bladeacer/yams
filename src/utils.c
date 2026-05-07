@@ -11,22 +11,19 @@ long get_ms() {
 }
 
 char* sh_escape(const char* src) {
-    static char escaped[8192];
-    memset(escaped, 0, sizeof(escaped));
-    char *dest = escaped;
-    
-    while (*src && (dest - escaped < 8191)) {
-        if (*src == '\'') { 
-            if (dest - escaped < 8187) {
-                memcpy(dest, "'\\''", 4); 
-                dest += 4; 
-            }
-        } else { 
-            *dest++ = *src; 
+    static char escaped[1024];
+    char *d = escaped;
+    char *limit = escaped + sizeof(escaped) - 5;
+
+    while (*src && d < limit) {
+        if (*src == '\'') {
+            *d++ = '\''; *d++ = '\\'; *d++ = '\''; *d++ = '\'';
+        } else {
+            *d++ = *src;
         }
         src++;
     }
-    *dest = '\0';
+    *d = '\0';
     return escaped;
 }
 

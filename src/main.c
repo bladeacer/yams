@@ -11,12 +11,13 @@
 #include <sys/types.h>
 #include <sys/prctl.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
 #include "debug.h"
 
-#define BUFFER_SIZE 262144
+#define BUFFER_SIZE 131072
 static char poll_buffer[BUFFER_SIZE];
 static size_t buf_idx = 0;
 
@@ -30,17 +31,9 @@ static long last_player_fail_ms = 0;
 
 void handle_exit(int sig) {
     DBG("handle_exit called with signal %d", sig);
-    
     if (player_fd != -1) close(player_fd);
-
     if (metadata_pid > 0) kill(metadata_pid, SIGKILL);
     if (ctrl_pid > 0) kill(ctrl_pid, SIGKILL);
-
-    if (log_file) {;
-        DBG("Session ended. Closing log.");
-        close_debug();
-    }
-
     cleanup_ui(sig); 
     exit(0);
 }
@@ -83,58 +76,36 @@ pid_t spawn_playerctl(char **args, int *out_fd) {
 
 void run_player_cmd(const char *action, const char *param) {
     if (ctrl_pid > 0 && waitpid(ctrl_pid, NULL, WNOHANG) == 0) return;
-
-    char *args[4];
-    args[0] = "playerctl";
-    args[1] = (char *)action;
-    args[2] = (char *)param;
-    args[3] = NULL;
-
+    char *args[4] = {"playerctl", (char *)action, (char *)param, NULL};
     ctrl_pid = spawn_playerctl(args, NULL);
-
-    if (param)
-        DBG("Running playerctl: %s %s", action, param);
-    else
-        DBG("Running playerctl: %s", action);
 }
 
-static void process_metadata_stream() {
-    char *last_end = NULL;
-    char *search_ptr = poll_buffer;
+static bool process_metadata_stream() {
+    char *end_tag = strstr(poll_buffer, "[[END]]");
+    if (!end_tag) return false;
 
-    while (true) {
-        char *found = strstr(search_ptr, "[[END]]¶");
-        if (!found) break;
-        last_end = found;
-        search_ptr = found + 8;
+    char *target_block = strstr(poll_buffer, "PLAYER|");
+    if (!target_block || target_block > end_tag) {
+        buf_idx = 0;
+        return false;
     }
 
-    if (!last_end) return;
+    *end_tag = '\0';
+    bool changed = parse_block(target_block);
 
-    size_t block_end_idx = (last_end + 8) - poll_buffer;
-
-    char saved = poll_buffer[block_end_idx];
-    poll_buffer[block_end_idx] = '\0';
-
-    char *last_start = poll_buffer;
-    char *current_pos = poll_buffer;
-    while (current_pos < last_end) {
-        char *found_start = strstr(current_pos, "PLAYER|");
-        if (!found_start || found_start > last_end) break;
-        last_start = found_start;
-        current_pos = found_start + 7;
+    size_t consumed = (end_tag + 7) - poll_buffer;
+    
+    while (consumed < buf_idx && (poll_buffer[consumed] == '\n' || poll_buffer[consumed] == '\r')) {
+        consumed++;
     }
 
-    parse_block(last_start);
-    resize_pending = true;
-
-    poll_buffer[block_end_idx] = saved;
-    size_t remaining = buf_idx - block_end_idx;
+    size_t remaining = buf_idx - consumed;
     if (remaining > 0) {
-        memmove(poll_buffer, poll_buffer + block_end_idx, remaining);
+        memmove(poll_buffer, poll_buffer + consumed, remaining);
     }
     buf_idx = remaining;
-    poll_buffer[buf_idx] = '\0';
+    
+    return changed;
 }
 
 void show_seek_input() {
@@ -222,7 +193,7 @@ void show_renderer_selection() {
     wbkgd(awin, COLOR_PAIR(3));
     box(awin, 0, 0);
     mvwprintw(awin, 0, 2, " Select Art Renderer ");
-    mvwprintw(awin, 1, 2, "[0] Chafa (Default)");
+    mvwprintw(awin, 1, 2, "[0] chafa (Default)");
     mvwprintw(awin, 2, 2, "[1] jp2a (Native)");
     mvwprintw(awin, 4, 2, "Press any other key to cancel");
     mvwprintw(awin, 3, 2, "Choice: ");
@@ -246,10 +217,10 @@ void show_renderer_selection() {
     resize_pending = true;
 }
 
-static void handle_keypress(int ch);
-void show_help_overlay(void);
+static void handle_keypress(int ch, long now);
+void show_help_overlay(long now);
 
-static void handle_keypress(int ch) {
+static void handle_keypress(int ch, long now) {
     if (ch == ERR) return;
 
     char seek_cmd[64];
@@ -289,7 +260,7 @@ static void handle_keypress(int ch) {
             DBG("Manual refresh requested");
             reset_art();
             resize_pending = true;
-            last_resize_time = get_ms() - 1000;
+            last_resize_time = now - 1000;
             break;
 
         case 's':
@@ -301,18 +272,18 @@ static void handle_keypress(int ch) {
             break;
 
         case '?': 
-            if (!help_active) show_help_overlay(); 
+            if (!help_active) show_help_overlay(now); 
             break;
 
         default:
             if (!help_active && ch >= 32 && ch <= 126) {
-                show_help_overlay();
+                show_help_overlay(now);
             }
             break;
     }
 }
 
-void show_help_overlay() {
+void show_help_overlay(long now) {
     if (help_active) return;
     help_active = true;
 
@@ -360,25 +331,20 @@ void show_help_overlay() {
     int ch;
     nodelay(stdscr, FALSE);
     while (true) {
-        ch = wgetch(help_win);
-        if (resize_pending) {
-            break;
-        }
+        fd_set help_fds;
+        FD_ZERO(&help_fds);
+        FD_SET(STDIN_FILENO, &help_fds);
+        struct timeval h_tv = {0, 100000};
 
-        if (ch == ERR) {
-            usleep(10000); 
-            continue;
-        }
-        
-        if (ch == 27 || ch == '?' || ch == 'q') {
-            if (ch == 'q') handle_exit(0);
-            break;
-        }
+        int h_act = select(STDIN_FILENO + 1, &help_fds, NULL, NULL, &h_tv);
 
-        handle_keypress(ch);
-        
-        update_panels();
-        doupdate();
+        if (h_act > 0) {
+            ch = wgetch(help_win);
+            if (ch == 27 || ch == '?' || ch == 'q') break;
+            handle_keypress(ch, now);
+            update_panels();
+            doupdate();
+        }
     }
     nodelay(stdscr, TRUE);
 
@@ -389,152 +355,125 @@ void show_help_overlay() {
     help_active = false;
 }
 
-int main() {
-    setlocale(LC_ALL, "");
-
-    if (getenv("YAMS_EXIT_IMMEDIATELY")) {
-        init_ui();
-        cleanup_ui(0);
-        return 0;
+static void handle_player_data() {
+    char chunk[16384];
+    ssize_t n;
+    while ((n = read(player_fd, chunk, sizeof(chunk))) > 0) {
+        if (buf_idx + n < BUFFER_SIZE) {
+            memcpy(poll_buffer + buf_idx, chunk, n);
+            buf_idx += n;
+            poll_buffer[buf_idx] = '\0';
+        } else {
+            buf_idx = 0;
+        }
     }
 
-    init_debug();
+    if (buf_idx > 0 && strstr(poll_buffer, "[[END]]")) {
+        if (process_metadata_stream()) {
+            resize_pending = true;
+        }
+    }
 
+    if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+        close(player_fd);
+        player_fd = -1;
+        clear_metadata();
+        resize_pending = true;
+    }
+}
+
+static void maintain_subprocesses(char **args, long now) {
+    static long last_check = 0;
+
+    if (ctrl_pid > 0 && (now - last_check > 500)) {
+        if (waitpid(ctrl_pid, NULL, WNOHANG) > 0) ctrl_pid = -1;
+        last_check = now;
+    }
+
+    if (player_fd == -1 && (now - last_player_fail_ms > 2000)) {
+        DBG("Attempting playerctl restart...");
+        metadata_pid = spawn_playerctl(args, &player_fd);
+        if (player_fd != -1) {
+            fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL) | O_NONBLOCK);
+        }
+        last_player_fail_ms = now;
+    }
+}
+
+int main() {
+    setlocale(LC_ALL, "");
+    if (getenv("YAMS_EXIT_IMMEDIATELY")) { init_ui(); cleanup_ui(0); return 0; }
+    init_debug();
     signal(SIGINT,  handle_exit);
     signal(SIGTERM, handle_exit);
     signal(SIGWINCH, handle_winch);
 
     init_ui();
-    draw_dashboard();
+    nodelay(stdscr, TRUE);
 
-    DBG("UI Initialized. Entering Event Loop.");
+    /* buf_idx = 0; */
+    /* memset(poll_buffer, 0, BUFFER_SIZE); */
 
-    const char *fmt = "PLAYER|{{playerName}}¶STATUS|{{status}}¶TITLE|{{xesam:title}}¶"
-                      "ARTIST|{{xesam:artist}}¶ALBUM|{{xesam:album}}¶PATH|{{xesam:url}}¶"
-                      "LENGTH|{{mpris:length}}¶GENRE|{{xesam:genre}}¶COMPOSER|{{xesam:composer}}¶"
-                      "ART|{{mpris:artUrl}}¶LYRICS|{{xesam:asText}}¶[[END]]¶";
+    const char *fmt = "PLAYER|{{playerName}}#STATUS|{{status}}#TITLE|{{xesam:title}}#"
+        "ARTIST|{{xesam:artist}}#ALBUM|{{xesam:album}}#PATH|{{xesam:url}}#"
+        "LENGTH|{{mpris:length}}#GENRE|{{xesam:genre}}#COMPOSER|{{xesam:composer}}#"
+        "ART|{{mpris:artUrl}}#LYRICS|{{xesam:asText}}#[[END]]";
 
     char *meta_args[] = {"playerctl", "metadata", "--follow", "--format", (char*)fmt, NULL};
     metadata_pid = spawn_playerctl(meta_args, &player_fd);
     
+    if (player_fd != -1)
+        fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL, 0) | O_NONBLOCK);
+
+    long last_draw_time = 0;
+
     while (1) {
+        long now = get_ms();
+
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(STDIN_FILENO, &fds);
-
         int max_fd = STDIN_FILENO;
-
-        if (ctrl_pid > 0) waitpid(ctrl_pid, NULL, WNOHANG);
-
-        if (player_fd == -1 && (get_ms() - last_player_fail_ms > 2000)) {
-            DBG("Attempting playerctl restart...");
-            metadata_pid = spawn_playerctl(meta_args, &player_fd);
-            last_player_fail_ms = get_ms(); 
-        }
 
         if (player_fd != -1) {
             FD_SET(player_fd, &fds);
             if (player_fd > max_fd) max_fd = player_fd;
         }
 
+        maintain_subprocesses(meta_args, now);
+
         struct timeval tv = {0, 100000}; 
-        
         int activity = select(max_fd + 1, &fds, NULL, NULL, &tv);
-
-        if (resize_pending) {
-            long now = get_ms();
-            if (now - last_resize_time > 200) {
-                struct winsize size;
-                if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
-                    resizeterm(size.ws_row, size.ws_col);
-                }
-
-                draw_dashboard();
-                resize_pending = false;
-            }
-        }
 
         if (activity < 0) {
             if (errno == EINTR) continue;
-            break; 
+            break;
         }
 
-        if (activity > 0) {
-            if (player_fd != -1 && FD_ISSET(player_fd, &fds)) {
-                char chunk[8192];
-                ssize_t n = read(player_fd, chunk, sizeof(chunk) - 1);
-                
-                if (n > 0) {
-                    static bool skipping_art = false;
-                    for (ssize_t i = 0; i < n; i++) {
-                        if (!skipping_art && buf_idx >= 14) {
-                            if (strncmp(poll_buffer + (buf_idx - 14), "ART|data:image", 14) == 0) {
-                                skipping_art = true;
-                                DBG("Massive ART detected: Dropping Base64 bytes...");
-                            }
-                        }
-
-                        if (skipping_art) {
-                            if ((unsigned char)chunk[i] == 0xC2 && i + 1 < n && (unsigned char)chunk[i+1] == 0xB6) {
-                                skipping_art = false;
-                                i++;
-                                if (buf_idx + 2 < BUFFER_SIZE) {
-                                    poll_buffer[buf_idx++] = (char)0xC2;
-                                    poll_buffer[buf_idx++] = (char)0xB6;
-                                }
-                                DBG("ART skip finished. Resuming ingestion.");
-                            }
-                            continue;
-                        }
-
-                        if (buf_idx < BUFFER_SIZE - 1) {
-                            poll_buffer[buf_idx++] = chunk[i];
-                        } else {
-                            DBG("Buffer overflow! Safety reset.");
-                            buf_idx = 0;
-                            break;
-                        }
-                    }
-                    poll_buffer[buf_idx] = '\0';
-                    process_metadata_stream();
-                } 
-                else if (n <= 0) {
-                    close(player_fd);
-                    player_fd = -1;
-
-                    if (metadata_pid > 0) {
-                        kill(metadata_pid, SIGKILL);
-                        waitpid(metadata_pid, NULL, 0);
-                        metadata_pid = -1;
-                    }
-
-                    clear_metadata();
-                    resize_pending = true;
-
-                    last_player_fail_ms = get_ms();
-                    DBG("Player connection lost.");
-                }
-            }
-
-            if (FD_ISSET(STDIN_FILENO, &fds)) {
-                int ch = getch();
-                if (ch == ERR) {
-                    static int error_count = 0;
-                    if (++error_count > 10) {
-                        FD_CLR(STDIN_FILENO, &fds); 
-                        struct timespec ts = {0, 10000000};
-                        nanosleep(&ts, NULL);
-                    }
-                } else {
-                    handle_keypress(ch);
-                    while ((ch = getch()) != ERR) {
-                        handle_keypress(ch);
-                    }
-                }
-            }
+        if (activity > 0 && FD_ISSET(STDIN_FILENO, &fds)) {
+            int ch;
+            while ((ch = getch()) != ERR) handle_keypress(ch, now);
         }
 
+        if (activity > 0 && player_fd != -1 && FD_ISSET(player_fd, &fds)) {
+            handle_player_data();
+        }
+
+        if (resize_pending || activity == 0) {
+            if (now - last_draw_time > 50) {
+                struct winsize size;
+                if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
+                    if (size.ws_row != LINES || size.ws_col != COLS) 
+                        resizeterm(size.ws_row, size.ws_col);
+                }
+                draw_dashboard();
+                last_draw_time = now;
+                resize_pending = false;
+            }
+        }
     }
+
+    draw_dashboard();
 
     handle_exit(0);
     return 0;

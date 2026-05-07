@@ -125,7 +125,7 @@ static void draw_help_text(WINDOW *win, int y, int x) {
     snprintf(seek_str, sizeof(seek_str), "Seek: %ds", get_seek_interval());
     draw_item(win, "-/+", seek_str, &cur_y, &cur_x, x, max_h, max_w);
 
-    const char *r_name = (get_preferred_renderer() == 1) ? "jp2a" : "Chafa";
+    const char *r_name = (get_preferred_renderer() == 1) ? "jp2a" : "chafa";
     snprintf(seek_str, sizeof(seek_str), "Art: %s", r_name);
     draw_item(win, "a", seek_str, &cur_y, &cur_x, x, max_h, max_w);
 
@@ -166,42 +166,19 @@ static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
 }
 
 static void draw_metadata_line(WINDOW *win, int *y, const char *label, const char *value, int color_pair, bool bold) {
-    int max_y, max_x;
-    getmaxyx(win, max_y, max_x);
-    
-    if (*y >= max_y) return;
+    if (!value || *y >= getmaxy(win)) return;
 
-    int label_len = strlen(label);
-    
     if (color_pair > 0) wattron(win, COLOR_PAIR(color_pair));
     if (bold) wattron(win, A_BOLD);
 
-    mvwprintw(win, *y, 0, "%s", label);
+    mvwaddstr(win, *y, 0, label);
     
-    int val_x = label_len;
-    int available_w = max_x - val_x - 1;
-    
-    if (available_w <= 0) {
-        (*y)++;
-        goto cleanup;
-    }
+    int val_x = strlen(label);
+    int max_w = getmaxx(win) - val_x - 1;
 
-    const char *ptr = value;
-    while (*ptr && *y < max_y) {
-        mvwaddnstr(win, *y, val_x, ptr, available_w);
-        
-        int printed = strlen(ptr);
-        if (printed > available_w) {
-            ptr += available_w;
-            (*y)++;
-            val_x = label_len;
-        } else {
-            ptr += printed;
-            (*y)++;
-        }
-    }
+    mvwaddnstr(win, *y, val_x, value, max_w);
+    (*y)++;
 
-cleanup:
     if (bold) wattroff(win, A_BOLD);
     if (color_pair > 0) wattroff(win, COLOR_PAIR(color_pair));
 }
@@ -250,7 +227,7 @@ static void render_lyrics_pane(WINDOW *win) {
         wattroff(win, COLOR_PAIR(3));
     } else {
         wattron(win, A_DIM);
-        mvwprintw(win, 2, 0, "  (No lyrics found)");
+        mvwprintw(win, 0, 0, "  (No lyrics found)");
         wattroff(win, A_DIM);
     }
     wnoutrefresh(win); 
@@ -303,14 +280,29 @@ void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
+    static bool first_run = true;
+    static Metadata last_m;
+
     char *current_art_source = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     bool player_active = (m.status[0] != '\0' && strcmp(m.status, "Stopped") != 0);
+
     char current_title_sig[2048];
     snprintf(current_title_sig, sizeof(current_title_sig), "%s%s", safe_str(m.title), safe_str(m.artist));
 
-    bool is_new_track = (strcmp(current_art_source, last_art_path) != 0) ||
-        (strcmp(current_title_sig, last_title_sig) != 0);
-    bool force_redraw = (max_x != last_w || max_y != last_h || resize_pending);
+    bool metadata_changed = memcmp(&m, &last_m, sizeof(Metadata)) != 0;
+    bool size_changed = (max_x != last_w || max_y != last_h);
+    bool force_redraw = (size_changed || resize_pending || first_run);
+
+    if (!metadata_changed && !force_redraw) return;
+
+    if (max_x != last_w || max_y != last_h || first_run) {
+        recreate_ui_components(max_y, max_x);
+    }
+
+    first_run = false;
+    last_m = m;
+    last_w = max_x;
+    last_h = max_y;
 
     if (force_redraw || !main_win) {
         if (resize_pending) {
@@ -368,7 +360,7 @@ void draw_dashboard() {
     doupdate();
 
     if (player_active) {
-        bool force = force_redraw || is_new_track;
+        bool force = force_redraw || metadata_changed;
         update_and_render_art(current_art_source, current_title_sig, art_w, art_h, force);
     }
 

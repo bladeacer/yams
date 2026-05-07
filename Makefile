@@ -6,8 +6,12 @@ CYAN  := $(shell printf "\033[36m")
 GREEN := $(shell printf "\033[32m")
 RESET := $(shell printf "\033[0m")
 BOLD  := $(shell printf "\033[1m")
+
 ITERATIONS := 5
 SLEEP_TIME := 5
+PERF_DURATION := 30
+PERF_SAMPLES := 6
+SAMPLE_TIME := 5
 
 help: ## Show this help message
 	@echo "Usage: make [target]"
@@ -16,7 +20,7 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
 setup: ## Initialize meson build directory (Debug mode)
-	@meson setup build --buildtype=debugoptimized --optimization=s
+	@meson setup build --buildtype=debugoptimized --optimization=3
 
 build: ## Compile yams using Ninja
 	@if [ ! -d "build" ]; then meson setup build; fi
@@ -31,7 +35,7 @@ clean: ## Remove build directory
 	@rm -rf build
 
 release: clean ## Build a stripped release binary and check size
-	@meson setup build --buildtype=release -Dstrip=true --optimization=s -Dc_args="-DNDEBUG"
+	@meson setup build --buildtype=release -Dstrip=true --optimization=3 -Dc_args="-DNDEBUG"
 	@ninja -C build
 	@echo ""
 	@echo "\033[32m--- Binary Info ---\033[0m"
@@ -92,9 +96,12 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 
 	@printf "\n$(CYAN)Step 3: Cold Start Speed (Hyperfine)$(RESET)\n"
 	@if command -v hyperfine >/dev/null; then \
-		YAMS_EXIT_IMMEDIATELY=1 hyperfine -N --warmup 10 --runs 100 \
+		INSTALLED_CMD=""; \
+		if command -v yams >/dev/null; then INSTALLED_CMD="yams"; fi; \
+			YAMS_EXIT_IMMEDIATELY=1 hyperfine -N --warmup 20 --runs 200 \
 			'./build-debug/yams' \
-			'./build-release/yams'; \
+			'./build-release/yams' \
+			$$INSTALLED_CMD; \
 	else \
 		echo "Skipping: hyperfine not installed."; \
 	fi
@@ -107,14 +114,76 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 	fi
 
 	@printf "\n$(CYAN)Step 5: Linux Perf Analysis (Release Build)$(RESET)\n"
+	@$(MAKE) perf-stat BIN_PATH="./build-release/yams" DURATION=$(PERF_DURATION)
+
+perf: build-release ## Standalone Deep Perf Analysis (30s)
+	@$(MAKE) perf-stat BIN_PATH="./build-release/yams" DURATION=$(PERF_DURATION)
+
+perf-stat:
 	@if command -v perf >/dev/null; then \
-		setsid ./build-release/yams > /dev/null 2>&1 & \
-		YPID=$$!; sleep 1; \
-		perf stat -p $$YPID -- sleep 5; \
-		kill -9 -$$YPID > /dev/null 2>&1 || true; \
+		echo "$(CYAN)--- Starting Perf Analysis ($(PERF_SAMPLES) samples) ---$(RESET)"; \
+		pkill -9 yams || true; \
+		TERM=xterm setsid $(BIN_PATH) > /dev/null 2>&1 & \
+		YPID=$$!; \
+		sleep 2; \
+		if ps -p $$YPID > /dev/null; then \
+			echo "$(GREEN)Tracing PID: $$YPID...$(RESET)"; \
+			if [ "$(STRACE)" = "1" ]; then \
+				echo "$(CYAN)Aggregating Syscalls in background...$(RESET)"; \
+				sudo strace -p $$YPID -o strace_raw.log & STRACE_PID=$$!; \
+			fi; \
+			> perf_results.log; \
+			for i in $$(seq 1 $(PERF_SAMPLES)); do \
+				echo "  Sample $$i/$(PERF_SAMPLES)..."; \
+				perf stat -p $$YPID -- sleep $(SAMPLE_TIME) 2>&1 | tee -a perf_results.log | grep -E 'insn_per_cycle|tma_frontend_bound|tma_backend_bound|tma_retiring' || true; \
+			done; \
+			if [ "$(STRACE)" = "1" ]; then \
+				sudo kill -INT $$STRACE_PID; \
+				echo "\n$(BOLD)--- TOP SYSCALLS ---$(RESET)"; \
+				awk '{print $$1}' strace_raw.log | cut -d'(' -f1 | sort | uniq -c | sort -nr | head -n 10; \
+				rm strace_raw.log; \
+			fi; \
+			kill -9 -$$YPID > /dev/null 2>&1 || true; \
+			printf "\n$(BOLD)--- OVERALL PERF AVERAGES ---$(RESET)\n"; \
+			awk '!/nan|TopdownL1/ { \
+				match($$0, /[0-9]+\.[0-9]+/); \
+				val = substr($$0, RSTART, RLENGTH); \
+				if (val == "") next; \
+				if ($$0 ~ /insn_per_cycle/)    { ipc += val; ipcc++ } \
+				if ($$0 ~ /tma_frontend_bound/) { fe += val; fec++ } \
+				if ($$0 ~ /tma_backend_bound/)  { be += val; bec++ } \
+				if ($$0 ~ /tma_retiring/)        { rt += val; rtc++ } \
+			} \
+			END { \
+				if (ipcc>0) printf "  %-20s %.2f\n",  "IPC:", ipc/ipcc; \
+				if (fec>0)  printf "  %-20s %.1f%%\n", "Frontend Bound:", fe/fec; \
+				if (bec>0)  printf "  %-20s %.1f%%\n", "Backend Bound:", be/bec; \
+				if (rtc>0)  printf "  %-20s %.1f%%\n", "Retiring:", rt/rtc; \
+			}' perf_results.log; \
+			rm perf_results.log; \
+		else \
+			echo "Error: Yams failed to stay alive."; exit 1; \
+		fi; \
 	else \
 		echo "Skipping: perf not installed."; \
 	fi
+
+trace: build-release ## Run yams and attach strace to see syscalls in real-time
+	@echo "$(CYAN)--- Starting Syscall Trace ---$(RESET)"
+	@pkill -9 yams || true
+	@TERM=xterm setsid ./build-release/yams > /dev/null 2>&1 & \
+	YPID=$$!; \
+	sleep 1; \
+	if ps -p $$YPID > /dev/null; then \
+		echo "$(GREEN)Attaching strace to PID: $$YPID (Press Ctrl+C to stop)...$(RESET)"; \
+		sudo strace -p $$YPID -c -S name; \
+		kill -9 -$$YPID > /dev/null 2>&1 || true; \
+	else \
+		echo "Error: Yams failed to start."; \
+	fi
+
+perf-trace: build-release ## Run perf and strace simultaneously
+	@$(MAKE) perf-stat BIN_PATH="./build-release/yams" DURATION=$(PERF_DURATION) STRACE=1
 
 bench-run:
 	@printf "\n$(CYAN)[%s Version]$(RESET)\n" "$(RUN_NAME)"

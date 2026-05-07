@@ -20,7 +20,7 @@ Yet another media screensaver.
   - Set Preferred ASCII renderer (`chafa` or `jp2a`)
 - Help Menu for keybinds
 - Refresh Button (if auto-refresh/polling does not work)
-- Window resize handling
+- Layout handling when resizing window
 
 ## Planned
 
@@ -69,6 +69,7 @@ Built on the shoulders of giants.
 - ninja (build)
 - hyperfine (benchmarking)
 - perf (benchmarking)
+- awk (benchmarking)
 
 ## Platform support
 
@@ -94,8 +95,8 @@ git clone --depth=1 https://codeberg.org/bladeacer/yams.git
 
 | `make` flag | Binary size |
 | --- | --- |
-| `make install` | ~ 32 kB |
-| `make release` | ~ 40 kB |
+| `make install` | ~ 36 kB |
+| `make release` | ~ 44 kB |
 | `make run` | ~ 84 kB |
 
 ## LLM Usage Disclaimer
