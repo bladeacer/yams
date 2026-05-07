@@ -119,15 +119,17 @@ static void draw_help_text(WINDOW *win, int y, int x) {
     draw_item(win, "q", "Quit", &cur_y, &cur_x, x, max_h, max_w);
     draw_item(win, "r", "Refresh", &cur_y, &cur_x, x, max_h, max_w);
     draw_item(win, "?", "Help", &cur_y, &cur_x, x, max_h, max_w);
-    wattroff(win, A_BOLD);
 
-    char seek_str[16];
+    char seek_str[32];
 
-    wattron(win, A_BOLD);
-    snprintf(seek_str, sizeof(seek_str), "Interval: %ds", get_seek_interval());
+    snprintf(seek_str, sizeof(seek_str), "Seek: %ds", get_seek_interval());
     draw_item(win, "-/+", seek_str, &cur_y, &cur_x, x, max_h, max_w);
-    wattroff(win, A_BOLD);
 
+    const char *r_name = (get_preferred_renderer() == 1) ? "jp2a" : "Chafa";
+    snprintf(seek_str, sizeof(seek_str), "Art: %s", r_name);
+    draw_item(win, "a", seek_str, &cur_y, &cur_x, x, max_h, max_w);
+
+    wattroff(win, A_BOLD);
 }
 
 static void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {

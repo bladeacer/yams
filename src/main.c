@@ -213,30 +213,34 @@ void show_seek_input() {
 void show_renderer_selection() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
-    int h = 5, w = 35;
+    int h = 6, w = 35;
     int sy = (max_y - h) / 2;
     int sx = (max_x - w) / 2;
 
     WINDOW *awin = newwin(h, w, sy, sx);
     PANEL *apanel = new_panel(awin);
+    
     wbkgd(awin, COLOR_PAIR(3));
     box(awin, 0, 0);
     mvwprintw(awin, 0, 2, " Select Art Renderer ");
     mvwprintw(awin, 1, 2, "[0] Chafa (Default)");
-    mvwprintw(awin, 2, 2, "[1] jp2a");
+    mvwprintw(awin, 2, 2, "[1] jp2a (Native)");
+    mvwprintw(awin, 4, 2, "Press any other key to cancel");
     mvwprintw(awin, 3, 2, "Choice: ");
 
     update_panels();
     doupdate();
 
-    echo();
     curs_set(1);
-    char input = mvwgetch(awin, 3, 10);
-    noecho();
+    int ch = mvwgetch(awin, 3, 10);
     curs_set(0);
 
-    if (input == '1') set_preferred_renderer(1);
-    else if (input == '0') set_preferred_renderer(0);
+    if (ch == '1') {
+        set_preferred_renderer(1);
+    } else if (ch == '0') {
+        set_preferred_renderer(0);
+    }
+    // Any other key simply falls through and exits
 
     del_panel(apanel);
     delwin(awin);
@@ -266,6 +270,8 @@ static void handle_keypress(int ch) {
             break;
         case 'a':
             show_renderer_selection();
+            reset_art();
+            resize_pending = true;
             break;
         case '+':
             set_seek_interval(get_seek_interval() + 5);
@@ -280,7 +286,10 @@ static void handle_keypress(int ch) {
         case KEY_LEFT: run_player_cmd("previous", NULL); break;
         case 'l':
         case KEY_RIGHT: run_player_cmd("next", NULL); break;
-        case 'r': resize_pending = true; break;
+        case 'r':
+            reset_art();
+            resize_pending = true;
+            break;
 
         case 's':
             show_seek_input();

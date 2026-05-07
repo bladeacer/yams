@@ -28,26 +28,25 @@ void render_art(int x, int y, int w, int h) {
     const char *tmp_raw = "/dev/shm/yams_raw.png";
     char cmd[16384];
 
-    // 1. Extraction remains the same
     snprintf(cmd, sizeof(cmd), 
              "ffmpeg -hide_banner -loglevel error -y -i '%s' -map 0:v:0 -map_metadata -1 -frames:v 1 '%s'", 
              final_path, tmp_raw);
     if (system(cmd) != 0) return;
 
+    const char *jp2a_chars = "   ...',;:clodxkO0KXNWM";
+
     if (get_preferred_renderer() == 1) {
         snprintf(cmd, sizeof(cmd),
                 "magick \"%s\" -fuzz 10%% -trim +repage "
                 "-thumbnail %dx%d! -gravity center -extent %dx%d jpg:- | "
-                "jp2a -b --width=%d --height=%d --colors '%s'",
-                tmp_raw, (int)(w * 1.5), h, (int)(w * 1.5), h, jp2a_chars);
+                "jp2a --chars=\"%s\" --width=%d --height=%d --colors -",
+                tmp_raw, (int)(w * 1.5), h, (int)(w * 1.5), h, jp2a_chars, w, h);
     } else {
-        const char *jp2a_chars = " '.,-~:;=!*#$@"; 
-        
         snprintf(cmd, sizeof(cmd),
                 "magick \"%s\" -fuzz 10%% -trim +repage "
                 "-thumbnail %dx%d! -gravity center -extent %dx%d jpg:- | "
-                "chafa --format symbols --symbols \"%s\" --fg-only --fill none --bg black --probe off "
-                "-c 256 --optimize 0 --dither none --stretch --size %dx%d -",
+                "chafa --format symbols --symbols \"[%s]\" --fg-only --fill none --bg black --probe off "
+                "-c 256 --optimize 0 --dither ordered --dither-intensity 0.3 --stretch --size %dx%d -",
                 tmp_raw, (int)(w * 1.5), h, (int)(w * 1.5), h, jp2a_chars, w, h);
     }
 
