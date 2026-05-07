@@ -113,9 +113,6 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 		$(MAKE) bench-run RUN_NAME="Installed" BIN_PATH="$$(command -v yams)"; \
 	fi
 
-	@printf "\n$(CYAN)Step 5: Linux Perf Analysis (Release Build)$(RESET)\n"
-	@$(MAKE) perf-stat BIN_PATH="./build-release/yams" DURATION=$(PERF_DURATION)
-
 perf: build-release ## Standalone Deep Perf Analysis (30s)
 	@$(MAKE) perf-stat BIN_PATH="./build-release/yams" DURATION=$(PERF_DURATION)
 

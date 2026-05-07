@@ -334,7 +334,7 @@ void show_help_overlay(long now) {
         fd_set help_fds;
         FD_ZERO(&help_fds);
         FD_SET(STDIN_FILENO, &help_fds);
-        struct timeval h_tv = {0, 100000};
+        struct timeval h_tv = {0, 250000};
 
         int h_act = select(STDIN_FILENO + 1, &help_fds, NULL, NULL, &h_tv);
 
@@ -358,22 +358,24 @@ void show_help_overlay(long now) {
 static void handle_player_data() {
     char chunk[16384];
     ssize_t n;
+    bool data_read = false;
+
     while ((n = read(player_fd, chunk, sizeof(chunk))) > 0) {
         if (buf_idx + n < BUFFER_SIZE) {
             memcpy(poll_buffer + buf_idx, chunk, n);
             buf_idx += n;
             poll_buffer[buf_idx] = '\0';
+            data_read = true;
         } else {
             buf_idx = 0;
         }
     }
 
-    if (buf_idx > 0 && strstr(poll_buffer, "[[END]]")) {
+    if (data_read && strstr(poll_buffer, "[[END]]")) {
         if (process_metadata_stream()) {
             resize_pending = true;
         }
     }
-
     if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
         close(player_fd);
         player_fd = -1;
@@ -429,7 +431,6 @@ int main() {
 
     while (1) {
         long now = get_ms();
-
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(STDIN_FILENO, &fds);
@@ -442,7 +443,7 @@ int main() {
 
         maintain_subprocesses(meta_args, now);
 
-        struct timeval tv = {0, 100000}; 
+        struct timeval tv = {1, 0}; 
         int activity = select(max_fd + 1, &fds, NULL, NULL, &tv);
 
         if (activity < 0) {
@@ -453,13 +454,14 @@ int main() {
         if (activity > 0 && FD_ISSET(STDIN_FILENO, &fds)) {
             int ch;
             while ((ch = getch()) != ERR) handle_keypress(ch, now);
+            resize_pending = true; 
         }
 
         if (activity > 0 && player_fd != -1 && FD_ISSET(player_fd, &fds)) {
             handle_player_data();
         }
 
-        if (resize_pending || activity == 0) {
+        if (resize_pending) {
             if (now - last_draw_time > 50) {
                 struct winsize size;
                 if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
