@@ -304,8 +304,8 @@ void draw_dashboard() {
     last_w = max_x;
     last_h = max_y;
 
-    if (force_redraw || !main_win) {
-        if (resize_pending) {
+    if (!main_win) {
+        if (resize_pending || force_redraw) {
             clear();
         }
         recreate_ui_components(max_y, max_x);
@@ -325,8 +325,6 @@ void draw_dashboard() {
         if (art_w > 50) art_w = 50;
         art_h = (int)(safe_h * 0.4); 
     }
-
-    if (main_win) werase(main_win);
 
     if (!player_active) {
         draw_fallback_screen(main_win, max_y - 2, max_x - 2);

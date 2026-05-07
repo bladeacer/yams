@@ -97,7 +97,7 @@ git clone --depth=1 https://codeberg.org/bladeacer/yams.git
 | --- | --- |
 | `make install` | ~ 36 kB |
 | `make release` | ~ 44 kB |
-| `make run` | ~ 84 kB |
+| `make run` | ~ 76 kB |
 
 ## LLM Usage Disclaimer
 

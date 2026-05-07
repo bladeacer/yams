@@ -443,7 +443,15 @@ int main() {
 
         maintain_subprocesses(meta_args, now);
 
-        struct timeval tv = {1, 0}; 
+        struct timeval tv;
+        if (resize_pending) {
+            tv.tv_sec = 0;
+            tv.tv_usec = 0; 
+        } else {
+            tv.tv_sec = 1;
+            tv.tv_usec = 0;
+        }
+
         int activity = select(max_fd + 1, &fds, NULL, NULL, &tv);
 
         if (activity < 0) {
