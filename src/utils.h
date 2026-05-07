@@ -5,5 +5,7 @@ long get_ms();
 char* sh_escape(const char* src);
 void url_decode(char *dst, const char *src);
 float get_image_aspect(const char* path);
+int get_seek_interval(void);
+void set_seek_interval(int seconds);
 
 #endif

@@ -12,11 +12,12 @@ long get_ms() {
 
 char* sh_escape(const char* src) {
     static char escaped[8192];
+    memset(escaped, 0, sizeof(escaped));
     char *dest = escaped;
-    while (*src && (dest - escaped < 8190)) {
+    
+    while (*src && (dest - escaped < 8191)) {
         if (*src == '\'') { 
-            // Close quote, add escaped quote, reopen quote
-            if (dest - escaped < 8186) {
+            if (dest - escaped < 8187) {
                 memcpy(dest, "'\\''", 4); 
                 dest += 4; 
             }
@@ -71,4 +72,16 @@ float get_image_aspect(const char* path) {
     }
     pclose(fp);
     return (float)w / (float)h;
+}
+
+static int seek_interval = 5;
+
+int get_seek_interval(void) {
+    return seek_interval;
+}
+
+void set_seek_interval(int seconds) {
+    if (seconds < 1) seconds = 1;
+    if (seconds > 60) seconds = 60;
+    seek_interval = seconds;
 }

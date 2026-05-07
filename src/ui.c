@@ -113,6 +113,11 @@ static void draw_help_text(WINDOW *win, int y, int x) {
     wattron(win, A_BOLD);
     draw_item(win, "q", "Quit", &cur_y, &cur_x, x, max_h, max_w);
     draw_item(win, "r", "Refresh", &cur_y, &cur_x, x, max_h, max_w);
+
+    char seek_str[16];
+    snprintf(seek_str, sizeof(seek_str), "Interval:%ds", get_seek_interval());
+    draw_item(win, "-/+", seek_str, &cur_y, &cur_x, x, max_h, max_w);
+
     draw_item(win, "?", "Help", &cur_y, &cur_x, x, max_h, max_w);
     wattroff(win, A_BOLD);
 }
