@@ -28,6 +28,7 @@ static pid_t metadata_pid = -1;
 static pid_t ctrl_pid = -1;
 static bool help_active = false;
 static long last_player_fail_ms = 0;
+long last_draw_time = 0;
 
 void handle_exit(int sig) {
     DBG("handle_exit called with signal %d", sig);
@@ -81,31 +82,44 @@ void run_player_cmd(const char *action, const char *param) {
 }
 
 static bool process_metadata_stream() {
-    char *end_tag = strstr(poll_buffer, "[[END]]");
-    if (!end_tag) return false;
-
-    char *target_block = strstr(poll_buffer, "PLAYER|");
-    if (!target_block || target_block > end_tag) {
-        buf_idx = 0;
-        return false;
-    }
-
-    *end_tag = '\0';
-    bool changed = parse_block(target_block);
-
-    size_t consumed = (end_tag + 7) - poll_buffer;
+    bool final_changed = false;
     
-    while (consumed < buf_idx && (poll_buffer[consumed] == '\n' || poll_buffer[consumed] == '\r')) {
-        consumed++;
-    }
+    while (true) {
+        char *end_tag = strstr(poll_buffer, "[[END]]");
+        if (!end_tag) break;
 
-    size_t remaining = buf_idx - consumed;
-    if (remaining > 0) {
-        memmove(poll_buffer, poll_buffer + consumed, remaining);
+        char *target_block = strstr(poll_buffer, "PLAYER|");
+        
+        if (!target_block || target_block > end_tag) {
+            // Trash this invalid segment
+            size_t consumed = (end_tag + 7) - poll_buffer;
+            size_t remaining = buf_idx - consumed;
+            if (remaining > 0) memmove(poll_buffer, poll_buffer + consumed, remaining);
+            buf_idx = remaining;
+            poll_buffer[buf_idx] = '\0';
+            continue; 
+        }
+
+        *end_tag = '\0';
+        
+        if (parse_block(target_block)) {
+            final_changed = true;
+        }
+
+        size_t consumed = (end_tag + 7) - poll_buffer;
+        while (consumed < buf_idx && (poll_buffer[consumed] == '\n' || poll_buffer[consumed] == '\r')) {
+            consumed++;
+        }
+
+        size_t remaining = buf_idx - consumed;
+        if (remaining > 0) {
+            memmove(poll_buffer, poll_buffer + consumed, remaining);
+        }
+        buf_idx = remaining;
+        poll_buffer[buf_idx] = '\0';
     }
-    buf_idx = remaining;
     
-    return changed;
+    return final_changed;
 }
 
 void show_seek_input() {
@@ -253,9 +267,15 @@ static void handle_keypress(int ch, long now) {
             break;
 
         case 'h':
-        case KEY_LEFT: run_player_cmd("previous", NULL); break;
+        case KEY_LEFT:
+            run_player_cmd("previous", NULL);
+            last_draw_time = 0;
+            break;
         case 'l':
-        case KEY_RIGHT: run_player_cmd("next", NULL); break;
+        case KEY_RIGHT:
+            run_player_cmd("next", NULL);
+            last_draw_time = 0;
+            break;
         case 'r':
             DBG("Manual refresh requested");
             reset_art();
@@ -361,7 +381,7 @@ static void handle_player_data() {
     bool data_read = false;
 
     while ((n = read(player_fd, chunk, sizeof(chunk))) > 0) {
-        if (buf_idx + n < BUFFER_SIZE) {
+        if (buf_idx + n < BUFFER_SIZE - 1) {
             memcpy(poll_buffer + buf_idx, chunk, n);
             buf_idx += n;
             poll_buffer[buf_idx] = '\0';
@@ -371,11 +391,12 @@ static void handle_player_data() {
         }
     }
 
-    if (data_read && strstr(poll_buffer, "[[END]]")) {
+    if (data_read) {
         if (process_metadata_stream()) {
             resize_pending = true;
         }
     }
+
     if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
         close(player_fd);
         player_fd = -1;
@@ -427,8 +448,6 @@ int main() {
     if (player_fd != -1)
         fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL, 0) | O_NONBLOCK);
 
-    long last_draw_time = 0;
-
     while (1) {
         long now = get_ms();
         fd_set fds;
@@ -444,9 +463,13 @@ int main() {
         maintain_subprocesses(meta_args, now);
 
         struct timeval tv;
+        long time_since_draw = now - last_draw_time;
+
         if (resize_pending) {
+            long wait_time = 50 - time_since_draw;
+            if (wait_time < 0) wait_time = 0;
             tv.tv_sec = 0;
-            tv.tv_usec = 0; 
+            tv.tv_usec = wait_time * 1000;
         } else {
             tv.tv_sec = 1;
             tv.tv_usec = 0;

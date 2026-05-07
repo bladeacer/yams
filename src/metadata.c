@@ -43,6 +43,8 @@ bool parse_block(char *block) {
             if (strcmp(m.title, val) != 0) {
                 strncpy(m.title, val, 511);
                 song_changed = true;
+                m.lyric_count = 0;
+                m.lyric_buffer[0] = '\0';
             }
         } else if (strncmp(token, "ARTIST|", 7) == 0) {
             char *val = token + 7;
@@ -50,6 +52,10 @@ bool parse_block(char *block) {
                 strncpy(m.artist, val, 511);
                 song_changed = true;
             }
+        } else if (strncmp(token, "GENRE|", 6) == 0) {
+            strncpy(m.genre, token + 6, 255);
+        } else if (strncmp(token, "COMPOSER|", 9) == 0) {
+            strncpy(m.composer, token + 9, 255);
         } else if (strncmp(token, "ALBUM|", 6) == 0) {
             strncpy(m.album, token + 6, 511);
         } else if (strncmp(token, "PATH|", 5) == 0) {
@@ -63,6 +69,7 @@ bool parse_block(char *block) {
             if (!(val[0] == 'd' && val[1] == 'a' && strncmp(val, "data:image", 10) == 0)) {
                 strncpy(m.art_url, val, 4095);
             }
+
         } else if (strncmp(token, "LYRICS|", 7) == 0 && song_changed) {
             m.lyric_count = 0;
             strncpy(m.lyric_buffer, token + 7, sizeof(m.lyric_buffer) - 1);

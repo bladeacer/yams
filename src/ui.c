@@ -66,6 +66,7 @@ void cleanup_ui(int sig) {
 }
 
 static const char* safe_str(const char* s) {
+    DBG("Processing string: %s", s);
     return (s && strlen(s) > 0) ? s : "Unknown";
 }
 
