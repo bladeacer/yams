@@ -21,7 +21,11 @@ static int last_w = 0;
 static int last_h = 0;
 static char last_art_path[4096] = {0};
 static char last_title_sig[2048] = {0};
-static bool last_player_active = false;
+
+void reset_art() {
+    last_art_path[0] = '\0';
+    last_title_sig[0] = '\0';
+}
 
 void init_ui() {
     initscr();
@@ -213,12 +217,12 @@ static void render_lyrics_pane(WINDOW *win) {
 static void update_and_render_art(const char* current_art_source, const char* current_title_sig, 
         int art_w, int art_h, bool force) {
     
+    if (!current_art_source || strlen(current_art_source) < 2) return;
+
     bool source_changed = strcmp(current_art_source, last_art_path) != 0;
     bool title_changed = strcmp(current_title_sig, last_title_sig) != 0;
 
     if (force || source_changed || title_changed) {
-        DBG("Executing Art Render: %s (Force: %s)", current_art_source, force ? "Yes" : "No");
-        
         render_art(3, 1, art_w, art_h);
 
         strncpy(last_art_path, current_art_source, sizeof(last_art_path) - 1);
@@ -226,32 +230,23 @@ static void update_and_render_art(const char* current_art_source, const char* cu
     }
 }
 
-static void recreate_ui_components(int max_y, int max_x, 
-    const char* art_src, const char* title_sig, int w, int h) {
+static void recreate_ui_components(int max_y, int max_x) {
     
-    DBG("Reconstructing UI components: %dx%d", max_x, max_y);
-
-    printf("\033[2J\033[H\033[0m"); 
-    fflush(stdout);
-
     if (main_panel) { del_panel(main_panel); main_panel = NULL; }
     if (lyr_sub)    { delwin(lyr_sub);    lyr_sub = NULL; }
     if (meta_sub)   { delwin(meta_sub);   meta_sub = NULL; }
     if (main_win)   { delwin(main_win);   main_win = NULL; }
 
     resizeterm(max_y, max_x);
-    clearok(stdscr, TRUE);
-    erase();
-
+    
+    erase(); 
+    
     main_win = newwin(max_y - 2, max_x - 2, 1, 1);
     main_panel = new_panel(main_win);
 
-    refresh();
+    wnoutrefresh(stdscr);
 
-    last_art_path[0] = '\0';
-    last_title_sig[0] = '\0';
-
-    update_and_render_art(art_src, title_sig, w, h, true);
+    reset_art();
 
     last_w = max_x; 
     last_h = max_y;
@@ -261,7 +256,6 @@ static void recreate_ui_components(int max_y, int max_x,
 void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
-
 
     bool horizontal = (max_x > 90);
     int safe_w = max_x - 3;
@@ -280,12 +274,9 @@ void draw_dashboard() {
     bool is_resize = (max_x != last_w || max_y != last_h || resize_pending);
     bool is_new_track = (strcmp(current_art_source, last_art_path) != 0) || 
         (strcmp(current_title_sig, last_title_sig) != 0);
-    bool state_flipped = (player_active != last_player_active);
 
-    if (is_resize || state_flipped || !main_win) {
-        printf("\033[2J\033[H");
-        recreate_ui_components(max_y, max_x, current_art_source, current_title_sig, art_w, art_h);
-        last_player_active = player_active;
+    if (is_resize || !main_win) {
+        recreate_ui_components(max_y, max_x);
     }
 
     if (main_win) werase(main_win);
@@ -322,15 +313,13 @@ void draw_dashboard() {
 
         if (meta_sub) render_metadata_pane(meta_sub);
         if (lyr_sub) render_lyrics_pane(lyr_sub);
-
-        update_panels();
-        doupdate();
-
-        if (is_new_track || is_resize) {
-            update_and_render_art(current_art_source, current_title_sig, art_w, art_h, false);
-        }
     }
 
     update_panels();
     doupdate();
+
+    if (player_active) {
+        bool force = is_resize || is_new_track;
+        update_and_render_art(current_art_source, current_title_sig, art_w, art_h, force);
+    }
 }

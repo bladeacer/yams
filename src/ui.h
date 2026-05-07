@@ -8,6 +8,7 @@
 extern bool resize_pending;
 extern int scroll_pos;
 
+void reset_art();
 void init_ui();
 void cleanup_ui(int sig);
 void draw_dashboard();

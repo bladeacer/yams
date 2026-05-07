@@ -51,6 +51,7 @@ void render_art(int x, int y, int w, int h) {
              w, h, tmp_proc, x + 1);
 
     def_prog_mode(); 
+    printf("\x1b[s");
     printf("\x1b[%d;%dH", y + 1, x + 1);
     fflush(stdout);
 
@@ -58,12 +59,11 @@ void render_art(int x, int y, int w, int h) {
     if (fp) {
         char line[8192];
         while (fgets(line, sizeof(line), fp)) {
-            fputs(line, stdout);
+            printf("\x1b[%dG%s", x + 1, line);
         }
         pclose(fp);
     }
-
-    printf("\x1b[0m");
+    printf("\x1b[u");
     fflush(stdout);
     reset_prog_mode();
 
