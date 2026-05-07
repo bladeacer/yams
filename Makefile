@@ -70,7 +70,7 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 	@pkill -9 yams || true
 	@pkill -9 playerctl || true
 	
-	@echo "\n$(CYAN)Step 1: Preparing Binaries...$(RESET)"
+	@echo "$(CYAN)Step 1: Preparing Binaries...$(RESET)"
 	@# Build Debug
 	@rm -rf build-debug
 	@meson setup build-debug --buildtype=debug > /dev/null
@@ -80,7 +80,7 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 	@meson setup build-release --buildtype=release -Dstrip=true --optimization=s -Dc_args="-DNDEBUG" > /dev/null
 	@ninja -C build-release > /dev/null
 
-	@echo "\n$(CYAN)Step 2: Cold Start Speed (Hyperfine)$(RESET)"
+	@printf "\n$(CYAN)Step 2: Cold Start Speed (Hyperfine)$(RESET)\n"
 	@if command -v hyperfine >/dev/null; then \
 		YAMS_EXIT_IMMEDIATELY=1 hyperfine -N --warmup 10 --runs 100 \
 			'./build-debug/yams' \
@@ -89,7 +89,7 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 		echo "Skipping: hyperfine not installed."; \
 	fi
 
-	@echo "\n$(CYAN)Step 3: Resource Efficiency (Idle Stats)$(RESET)"
+	@printf "\n$(CYAN)Step 3: Resource Efficiency (Idle Stats)$(RESET)\n"
 	@$(MAKE) bench-run RUN_NAME="Debug"   BIN_PATH="./build-debug/yams"
 	@$(MAKE) bench-run RUN_NAME="Release" BIN_PATH="./build-release/yams"
 	@if command -v yams >/dev/null; then \

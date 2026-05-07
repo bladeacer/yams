@@ -81,12 +81,21 @@ pid_t spawn_playerctl(char **args, int *out_fd) {
     return pid;
 }
 
-void run_player_cmd(const char *action) {
+void run_player_cmd(const char *action, const char *param) {
     if (ctrl_pid > 0 && waitpid(ctrl_pid, NULL, WNOHANG) == 0) return;
 
-    char *args[] = {"playerctl", (char *)action, NULL};
+    char *args[4];
+    args[0] = "playerctl";
+    args[1] = (char *)action;
+    args[2] = (char *)param;
+    args[3] = NULL;
+
     ctrl_pid = spawn_playerctl(args, NULL);
-    DBG("Running playerctl args: %s", args);
+
+    if (param)
+        DBG("Running playerctl: %s %s", action, param);
+    else
+        DBG("Running playerctl: %s", action);
 }
 
 static void process_metadata_stream() {
@@ -140,14 +149,14 @@ static void handle_keypress(int ch) {
 
     switch (ch) {
         case 'q': handle_exit(0); break;
-        case ' ': run_player_cmd("play-pause"); break;
+        case ' ': run_player_cmd("play-pause", NULL); break;
         case 'j':
-            snprintf(seek_cmd, sizeof(seek_cmd), "position %d-", get_seek_interval());
-            run_player_cmd(seek_cmd);
+            snprintf(seek_cmd, sizeof(seek_cmd), "%d-", get_seek_interval());
+            run_player_cmd("position", seek_cmd);
             break;
         case 'k':
-            snprintf(seek_cmd, sizeof(seek_cmd), "position %d+", get_seek_interval());
-            run_player_cmd(seek_cmd);
+            snprintf(seek_cmd, sizeof(seek_cmd), "%d+", get_seek_interval());
+            run_player_cmd("position", seek_cmd);
             break;
         case '+':
             set_seek_interval(get_seek_interval() + 5);
@@ -159,9 +168,9 @@ static void handle_keypress(int ch) {
             break;
 
         case 'h':
-        case KEY_LEFT: run_player_cmd("previous"); break;
+        case KEY_LEFT: run_player_cmd("previous", NULL); break;
         case 'l':
-        case KEY_RIGHT: run_player_cmd("next"); break;
+        case KEY_RIGHT: run_player_cmd("next", NULL); break;
         case 'r': resize_pending = true; break;
 
         case 27: case KEY_MOUSE: case KEY_PPAGE: case KEY_NPAGE:
@@ -179,7 +188,6 @@ static void handle_keypress(int ch) {
             break;
     }
 }
-
 
 void show_help_overlay() {
     if (help_active) return;
@@ -214,7 +222,7 @@ void show_help_overlay() {
     HELP_L("SPC",   "Play / Pause");
     HELP_L("h/<-",  "Previous Track");
     HELP_L("l/->",  "Next Track");
-    HELP_L("j/k",   "Seek -/+");
+    HELP_L("j/k",   "Seek Interval");
     HELP_L("-/+",   "Adjust Seek Interval");
     HELP_L("ESC/?", "Close this menu");
 

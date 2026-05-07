@@ -14,7 +14,9 @@ Yet another media screensaver.
   - Metadata (Media name/title/etc.)
   - ASCII art (extracted from audio file/URL)
   - Lyrics (if available)
-  - Play/Pause Next/Previous
+  - Play/Pause
+  - Next/Previous
+  - Seek Interval (go forward/backward by x seconds, can set amount)
 - Help Menu for keybinds
 - Refresh Button (if auto-refresh/polling does not work)
 
