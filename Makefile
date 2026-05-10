@@ -153,6 +153,8 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 		$(MAKE) bench-run RUN_NAME="Installed" BIN_PATH="$$(command -v yams)"; \
 	fi
 
+	$(kill_yams);
+
 trace: build-release ## Run yams and attach strace to see syscalls in real-time
 	@echo "$(CYAN)--- Starting Syscall Trace ---$(RESET)"
 	@pkill -9 yams || true
@@ -171,46 +173,59 @@ perf-trace: build-release ## Run perf and strace simultaneously
 	@$(MAKE) perf-stat BIN_PATH="./build-release/yams" DURATION=$(PERF_DURATION) STRACE=1
 
 define kill_yams
-	pkill -9 yams || true
+	pkill -9 yams || true; \
+	pkill -9 playerctl || true
 endef
 
 perf: release ## Standalone Deep Perf Analysis (Pinned to Core)
 	@$(MAKE) perf-stat BIN_PATH="./build-release/yams"
 
 perf-stat:
-	@if command -v perf >/dev/null; then \
-		echo "$(CYAN)--- Analysis (Core: $(CPU_CORE)) ---$(RESET)"; \
-		$(kill_yams); \
-		TERM=xterm setsid taskset -c $(CPU_CORE) $(BIN_PATH) > /dev/null 2>&1 & \
-		YPID=$$!; sleep 2; \
-		if ps -p $$YPID > /dev/null; then \
-			> perf_results.log; \
-			for i in $$(seq 1 $(PERF_SAMPLES)); do \
-				echo "  Sample $$i/$(PERF_SAMPLES)..."; \
-				perf stat -p $$YPID -ddd -- sleep $(SAMPLE_TIME) 2>&1 >> perf_results.log; \
-			done; \
-			kill -9 -$$YPID > /dev/null 2>&1 || true; \
-			$(kill_yams); \
-			printf "\n$(BOLD)--- OVERALL PERF AVERAGES ---$(RESET)\n"; \
-			awk '{ \
-				gsub(/%/, ""); \
-				if ($$0 ~ /insn_per_cycle/)    { ipc += $$1; ic++ } \
-				if ($$0 ~ /tma_frontend_bound/) { fe += $$1; fc++ } \
-				if ($$0 ~ /tma_backend_bound/)  { be += $$1; bc++ } \
-				if ($$0 ~ /tma_retiring/)       { rt += $$1; rc++ } \
-				if ($$0 ~ /branch-misses/)      { bm += $$1; bmc++ } \
-				if ($$0 ~ /L1-dcache-load-misses/) { l1 += $$1; l1c++ } \
-			} \
-			END { \
-				if (ic>0)  printf "  %-20s %.2f\n",  "IPC:", ipc/ic; \
-				if (fc>0)  printf "  %-20s %.1f%%\n", "Frontend Bound:", fe/fc; \
-				if (bc>0)  printf "  %-20s %.1f%%\n", "Backend Bound:", be/bc; \
-				if (rc>0)  printf "  %-20s %.1f%%\n", "Retiring:", rt/rc; \
-				if (l1c>0) printf "  %-20s %.2f\n",   "L1 Misses (Total):", l1/l1c; \
-			}' perf_results.log; \
-			rm perf_results.log; \
-		fi; \
-	fi
+	@if ! command -v perf >/dev/null; then echo "Error: perf not found."; exit 1; fi
+	@echo "$(CYAN)--- Deep Analysis (Core: $(CPU_CORE)) ---$(RESET)"
+	$(kill_yams)
+	@TERM=xterm taskset -c $(CPU_CORE) $(BIN_PATH) > /dev/null 2>&1 & \
+	YPID=$$!; \
+	sleep 2; \
+	if ! ps -p $$YPID > /dev/null; then echo "Error: Binary failed to start."; exit 1; fi; \
+	rm -f perf_results.log; \
+	for i in $$(seq 1 $(PERF_SAMPLES)); do \
+		echo "  Sample $$i/$(PERF_SAMPLES)..."; \
+		perf stat -p $$YPID -ddd -- sleep $(SAMPLE_TIME) 2>&1 >> perf_results.log; \
+	done; \
+	kill -9 $$YPID > /dev/null 2>&1 || true; \
+	$(kill_yams); \
+	printf "\n$(BOLD)--- OVERALL PERF AVERAGES ---$(RESET)\n"; \
+	awk '{ \
+		gsub(/,/, ""); \
+		if ($$0 ~ /insn per cycle/) { \
+			match($$0, /[0-9]+\.[0-9]+/); \
+			if (RLENGTH > 0) { ipc_sum += substr($$0, RSTART, RLENGTH); ipc_c++ } \
+		} \
+		if ($$0 ~ /tma_/) { \
+			match($$0, /[0-9]+\.[0-9]+%/); \
+			val = substr($$0, RSTART, RLENGTH-1); \
+			if ($$0 ~ /frontend/) { fe += val; fc++ } \
+			else if ($$0 ~ /backend/)  { be += val; bc++ } \
+			else if ($$0 ~ /speculation/) { bs += val; bsc++ } \
+			else if ($$0 ~ /retiring/) { rt += val; rc++ } \
+		} \
+		if ($$0 ~ /branch-misses/) { bm += $$1; bmc++ } \
+		if ($$0 ~ /L1-dcache-load-misses/) { l1 += $$1; l1c++ } \
+	} \
+	END { \
+		if (ipc_c>0) { \
+			printf "  %-20s %.2f\n", "Avg IPC:", ipc_sum/ipc_c; \
+			if (fc>0)  printf "  %-20s %.1f%%\n", "Frontend Bound:", fe/fc; \
+			if (bc>0)  printf "  %-20s %.1f%%\n", "Backend Bound:", be/bc; \
+			if (bsc>0) printf "  %-20s %.1f%%\n", "Bad Speculation:", bs/bsc; \
+			if (rc>0)  printf "  %-20s %.1f%%\n", "Retiring:", rt/rc; \
+			if (l1c>0) printf "  %-20s %d\n", "L1 D-Cache Misses:", l1/l1c; \
+		} else { \
+			print "  Error: No data captured. Try running with sudo."; \
+		} \
+	}' perf_results.log
+	@rm -f perf_results.log
 
 bench-run:
 	@printf "\n$(CYAN)[%s Version]$(RESET)\n" "$(RUN_NAME)"
@@ -252,4 +267,5 @@ bench-run:
 		printf "\n$(BOLD)AVERAGE STATS (Core $(CPU_CORE), n=$$count):$(RESET)\n"; \
 		printf "  %-15s %s%%\n" "CPU Usage:" "$$avg_cpu"; \
 		printf "  %-15s %s MB\n" "Memory:" "$$avg_mem"; \
-	fi
+	fi \
+	$(kill_yams);

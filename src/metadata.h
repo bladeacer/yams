@@ -1,23 +1,26 @@
+#include <stdbool.h>
+
 #ifndef METADATA_H
 #define METADATA_H
 
 #define MAX_LYRIC_LINES 1024
 
 typedef struct {
-    char title[512];
-    char artist[512];
-    char album[512];
+    int lyric_count;
     char status[64];
-    char art_url[4096];
-    char file_path[4096];
-    char genre[512];
-    char composer[1024];
     char player[64];
     char length_str[32];
     
     char *lyrics[MAX_LYRIC_LINES];
-    int lyric_count;
-    char lyric_buffer[65536];
+    
+    char title[512];
+    char artist[512];
+    char album[512];
+    char genre[256];
+    char composer[256];
+
+    char art_url[2048];
+    char file_path[2048];
 } Metadata;
 
 extern Metadata m;

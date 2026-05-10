@@ -24,7 +24,12 @@ sources = [
   'src/ui.c',
   'src/metadata.c',
   'src/utils.c',
-  'src/art.c'
+  'src/art.c',
+  'src/layout.c',
+  'src/terminal.c',
+  'src/panes.c',
+  'src/art_manager.c',
+  'src/render_utils.c'
 ]
 inc = include_directories('src')
 

@@ -4,3 +4,4 @@ yams.log
 perf_results.log
 debug.txt
 diff.txt
+perf.data*

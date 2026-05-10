@@ -77,50 +77,51 @@ pid_t spawn_playerctl(char **args, int *out_fd) {
 }
 
 void run_player_cmd(const char *action, const char *param) {
-    if (ctrl_pid > 0 && waitpid(ctrl_pid, NULL, WNOHANG) == 0) return;
-    char *args[4] = {"playerctl", (char *)action, (char *)param, NULL};
-    ctrl_pid = spawn_playerctl(args, NULL);
+    pid_t pid = fork();
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_WRONLY);
+        dup2(devnull, STDOUT_FILENO);
+        dup2(devnull, STDERR_FILENO);
+        close(devnull);
+
+        char *args[4] = {"playerctl", (char *)action, (char *)param, NULL};
+        execvp("playerctl", args);
+        _exit(1);
+    } else if (pid > 0) {
+        ctrl_pid = pid; 
+    }
 }
 
 static bool process_metadata_stream() {
-    bool final_changed = false;
+    bool changed = false;
+    char *start = poll_buffer;
     
-    while (true) {
-        char *end_tag = strstr(poll_buffer, "[[END]]");
+    while (1) {
+        char *end_tag = strstr(start, "[[END]]");
         if (!end_tag) break;
 
-        char *target_block = strstr(poll_buffer, "PLAYER|");
-        
-        if (!target_block || target_block > end_tag) {
-            // Trash this invalid segment
-            size_t consumed = (end_tag + 7) - poll_buffer;
-            size_t remaining = buf_idx - consumed;
-            if (remaining > 0) memmove(poll_buffer, poll_buffer + consumed, remaining);
-            buf_idx = remaining;
-            poll_buffer[buf_idx] = '\0';
-            continue; 
+        char *target = strstr(start, "PLAYER|");
+        if (target && target < end_tag) {
+            *end_tag = '\0';
+            if (parse_block(target)) {
+                changed = true;
+            }
         }
 
-        *end_tag = '\0';
-        
-        if (parse_block(target_block)) {
-            final_changed = true;
-        }
+        start = end_tag + 7; 
+    }
 
-        size_t consumed = (end_tag + 7) - poll_buffer;
-        while (consumed < buf_idx && (poll_buffer[consumed] == '\n' || poll_buffer[consumed] == '\r')) {
-            consumed++;
-        }
-
-        size_t remaining = buf_idx - consumed;
+    size_t processed_len = start - poll_buffer;
+    if (processed_len > 0) {
+        size_t remaining = buf_idx - processed_len;
         if (remaining > 0) {
-            memmove(poll_buffer, poll_buffer + consumed, remaining);
+            memmove(poll_buffer, poll_buffer + processed_len, remaining);
         }
         buf_idx = remaining;
         poll_buffer[buf_idx] = '\0';
     }
     
-    return final_changed;
+    return changed;
 }
 
 void show_seek_input() {
@@ -492,15 +493,18 @@ int main() {
         }
 
         if (resize_pending) {
-            long now = get_ms();
-            if (now - last_draw_time > 50) {
+            static long last_actual_resize = 0;
+            if (now - last_actual_resize > 100) {
                 struct winsize size;
                 if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
-                    if (size.ws_row != LINES || size.ws_col != COLS) 
+                    if (size.ws_row != LINES || size.ws_col != COLS) {
                         resizeterm(size.ws_row, size.ws_col);
+                        erase(); 
+                    }
                 }
                 draw_dashboard();
                 last_draw_time = now;
+                last_actual_resize = now;
                 resize_pending = false;
             }
         }
