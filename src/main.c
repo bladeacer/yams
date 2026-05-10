@@ -449,6 +449,8 @@ int main() {
 
     while (1) {
         long now = get_ms();
+        long elapsed_since_change = now - get_last_metadata_change_time();
+        bool debouncing = (elapsed_since_change < ART_DEBOUNCE_MS + 50);
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(STDIN_FILENO, &fds);
@@ -462,7 +464,6 @@ int main() {
         maintain_subprocesses(meta_args, now);
 
         struct timeval tv;
-        long elapsed_since_change = now - get_last_metadata_change_time();
 
         if (elapsed_since_change < ART_DEBOUNCE_MS) {
             tv.tv_sec = 0;
@@ -492,7 +493,7 @@ int main() {
             handle_player_data();
         }
 
-        if (resize_pending) {
+        if (resize_pending || (debouncing && elapsed_since_change >= ART_DEBOUNCE_MS)) {
             static long last_actual_resize = 0;
             if (now - last_actual_resize > 100) {
                 struct winsize size;
@@ -505,7 +506,10 @@ int main() {
                 draw_dashboard();
                 last_draw_time = now;
                 last_actual_resize = now;
-                resize_pending = false;
+
+                if (elapsed_since_change >= ART_DEBOUNCE_MS) {
+                    resize_pending = false;
+                }
             }
         }
 

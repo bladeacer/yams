@@ -45,6 +45,6 @@ void draw_dashboard() {
         snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(m.title), safe_str(m.artist));
 
         // This prints directly to the terminal, so it must be the LAST thing we do
-        update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, false);
+        update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, resize_pending);
     }
 }
