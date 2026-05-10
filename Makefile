@@ -7,11 +7,32 @@ GREEN := $(shell printf "\033[32m")
 RESET := $(shell printf "\033[0m")
 BOLD  := $(shell printf "\033[1m")
 
-ITERATIONS := 5
+ITERATIONS := 10
 SLEEP_TIME := 5
 PERF_DURATION := 30
-PERF_SAMPLES := 6
-SAMPLE_TIME := 5
+PERF_SAMPLES := 10
+SAMPLE_TIME := 10
+
+CPU_CORE := $(shell lscpu -p=CPU,CORE | grep -v '^#' | head -n 1 | cut -d',' -f1)
+
+ARCH := $(shell uname -m)
+OS   := $(shell uname -s)
+
+# Base Flags
+COMMON_FLAGS := -DNDEBUG -O3 -fno-plt
+
+ifeq ($(ARCH), x86_64)
+    # Intel/AMD Specific
+    OPTIM_FLAGS := -march=native -mtune=native
+else ifeq ($(ARCH), aarch64)
+    # ARM Linux (Raspberry Pi, etc)
+    OPTIM_FLAGS := -march=native
+else ifeq ($(OS), Darwin)
+    # Apple Silicon (M1/M2/M3)
+    OPTIM_FLAGS := -mcpu=apple-m1 
+endif
+
+FULL_CFLAGS := $(COMMON_FLAGS) $(OPTIM_FLAGS)
 
 help: ## Show this help message
 	@echo "Usage: make [target]"
@@ -43,7 +64,7 @@ release: clean ## Build a stripped release binary and check size
 		--optimization=3 \
 		-Db_lto=true \
 		-Dstrip=true \
-		-Dc_args="-DNDEBUG -march=native -fno-plt"
+		-Dc_args="$(FULL_CFLAGS)"
 	@ninja -C build
 	@echo ""
 	@echo "\033[32m--- Binary Info ---\033[0m"
@@ -59,7 +80,7 @@ install: ## Build release binary and install to system
 		--optimization=3 \
 		-Db_lto=true \
 		-Dstrip=true \
-		-Dc_args="-DNDEBUG -march=native -fno-plt"
+		-Dc_args="$(FULL_CFLAGS)"
 	@ninja -C build
 	@ninja -C build
 	@echo "$(GREEN)Installing to system...$(RESET)"
@@ -70,6 +91,11 @@ install: ## Build release binary and install to system
 	else \
 		echo "Success: Optimized binary installed."; \
 	fi
+
+debug-flags: ## Debug compiler flags set based on CPU arch
+	@echo "Detected Arch: $(ARCH)"
+	@echo "Detected OS:   $(OS)"
+	@echo "Flags sent:    $(FULL_CFLAGS)"
 
 uninstall: ## Remove yams from the system
 	@sudo rm -f /usr/local/bin/yams
@@ -95,7 +121,7 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 	@ninja -C build-debug > /dev/null
 	@# Build Release
 	@rm -rf build-release
-	@meson setup build-release --buildtype=release -Dstrip=true --optimization=s -Dc_args="-DNDEBUG" > /dev/null
+	@meson setup build-release --buildtype=release -Dstrip=true --optimization=s -Dc_args="$(FULL_CFLAGS)" > /dev/null
 	@ninja -C build-release > /dev/null
 
 	@printf "\n$(CYAN)Step 2: Binary Footprint (Disk Usage)$(RESET)\n"
@@ -127,58 +153,6 @@ bench: ## Full Benchmark: Size, Startup Speed (Hyperfine), and Resource Usage
 		$(MAKE) bench-run RUN_NAME="Installed" BIN_PATH="$$(command -v yams)"; \
 	fi
 
-perf: build-release ## Standalone Deep Perf Analysis (30s)
-	@$(MAKE) perf-stat BIN_PATH="./build-release/yams" DURATION=$(PERF_DURATION)
-
-perf-stat:
-	@if command -v perf >/dev/null; then \
-		echo "$(CYAN)--- Starting Perf Analysis ($(PERF_SAMPLES) samples) ---$(RESET)"; \
-		pkill -9 yams || true; \
-		TERM=xterm setsid $(BIN_PATH) > /dev/null 2>&1 & \
-		YPID=$$!; \
-		sleep 2; \
-		if ps -p $$YPID > /dev/null; then \
-			echo "$(GREEN)Tracing PID: $$YPID...$(RESET)"; \
-			if [ "$(STRACE)" = "1" ]; then \
-				echo "$(CYAN)Aggregating Syscalls in background...$(RESET)"; \
-				sudo strace -p $$YPID -o strace_raw.log & STRACE_PID=$$!; \
-			fi; \
-			> perf_results.log; \
-			for i in $$(seq 1 $(PERF_SAMPLES)); do \
-				echo "  Sample $$i/$(PERF_SAMPLES)..."; \
-				perf stat -p $$YPID -- sleep $(SAMPLE_TIME) 2>&1 | tee -a perf_results.log | grep -E 'insn_per_cycle|tma_frontend_bound|tma_backend_bound|tma_retiring' || true; \
-			done; \
-			if [ "$(STRACE)" = "1" ]; then \
-				sudo kill -INT $$STRACE_PID; \
-				echo "\n$(BOLD)--- TOP SYSCALLS ---$(RESET)"; \
-				awk '{print $$1}' strace_raw.log | cut -d'(' -f1 | sort | uniq -c | sort -nr | head -n 10; \
-				rm strace_raw.log; \
-			fi; \
-			kill -9 -$$YPID > /dev/null 2>&1 || true; \
-			printf "\n$(BOLD)--- OVERALL PERF AVERAGES ---$(RESET)\n"; \
-			awk '!/nan|TopdownL1/ { \
-				match($$0, /[0-9]+\.[0-9]+/); \
-				val = substr($$0, RSTART, RLENGTH); \
-				if (val == "") next; \
-				if ($$0 ~ /insn_per_cycle/)    { ipc += val; ipcc++ } \
-				if ($$0 ~ /tma_frontend_bound/) { fe += val; fec++ } \
-				if ($$0 ~ /tma_backend_bound/)  { be += val; bec++ } \
-				if ($$0 ~ /tma_retiring/)        { rt += val; rtc++ } \
-			} \
-			END { \
-				if (ipcc>0) printf "  %-20s %.2f\n",  "IPC:", ipc/ipcc; \
-				if (fec>0)  printf "  %-20s %.1f%%\n", "Frontend Bound:", fe/fec; \
-				if (bec>0)  printf "  %-20s %.1f%%\n", "Backend Bound:", be/bec; \
-				if (rtc>0)  printf "  %-20s %.1f%%\n", "Retiring:", rt/rtc; \
-			}' perf_results.log; \
-			rm perf_results.log; \
-		else \
-			echo "Error: Yams failed to stay alive."; exit 1; \
-		fi; \
-	else \
-		echo "Skipping: perf not installed."; \
-	fi
-
 trace: build-release ## Run yams and attach strace to see syscalls in real-time
 	@echo "$(CYAN)--- Starting Syscall Trace ---$(RESET)"
 	@pkill -9 yams || true
@@ -196,12 +170,55 @@ trace: build-release ## Run yams and attach strace to see syscalls in real-time
 perf-trace: build-release ## Run perf and strace simultaneously
 	@$(MAKE) perf-stat BIN_PATH="./build-release/yams" DURATION=$(PERF_DURATION) STRACE=1
 
+define kill_yams
+	pkill -9 yams || true
+endef
+
+perf: release ## Standalone Deep Perf Analysis (Pinned to Core)
+	@$(MAKE) perf-stat BIN_PATH="./build-release/yams"
+
+perf-stat:
+	@if command -v perf >/dev/null; then \
+		echo "$(CYAN)--- Analysis (Core: $(CPU_CORE)) ---$(RESET)"; \
+		$(kill_yams); \
+		TERM=xterm setsid taskset -c $(CPU_CORE) $(BIN_PATH) > /dev/null 2>&1 & \
+		YPID=$$!; sleep 2; \
+		if ps -p $$YPID > /dev/null; then \
+			> perf_results.log; \
+			for i in $$(seq 1 $(PERF_SAMPLES)); do \
+				echo "  Sample $$i/$(PERF_SAMPLES)..."; \
+				perf stat -p $$YPID -ddd -- sleep $(SAMPLE_TIME) 2>&1 >> perf_results.log; \
+			done; \
+			kill -9 -$$YPID > /dev/null 2>&1 || true; \
+			$(kill_yams); \
+			printf "\n$(BOLD)--- OVERALL PERF AVERAGES ---$(RESET)\n"; \
+			awk '{ \
+				gsub(/%/, ""); \
+				if ($$0 ~ /insn_per_cycle/)    { ipc += $$1; ic++ } \
+				if ($$0 ~ /tma_frontend_bound/) { fe += $$1; fc++ } \
+				if ($$0 ~ /tma_backend_bound/)  { be += $$1; bc++ } \
+				if ($$0 ~ /tma_retiring/)       { rt += $$1; rc++ } \
+				if ($$0 ~ /branch-misses/)      { bm += $$1; bmc++ } \
+				if ($$0 ~ /L1-dcache-load-misses/) { l1 += $$1; l1c++ } \
+			} \
+			END { \
+				if (ic>0)  printf "  %-20s %.2f\n",  "IPC:", ipc/ic; \
+				if (fc>0)  printf "  %-20s %.1f%%\n", "Frontend Bound:", fe/fc; \
+				if (bc>0)  printf "  %-20s %.1f%%\n", "Backend Bound:", be/bc; \
+				if (rc>0)  printf "  %-20s %.1f%%\n", "Retiring:", rt/rc; \
+				if (l1c>0) printf "  %-20s %.2f\n",   "L1 Misses (Total):", l1/l1c; \
+			}' perf_results.log; \
+			rm perf_results.log; \
+		fi; \
+	fi
+
 bench-run:
 	@printf "\n$(CYAN)[%s Version]$(RESET)\n" "$(RUN_NAME)"
-	@printf "$(GREEN)Monitoring %d samples (%ds intervals)...$(RESET)\n" $(ITERATIONS) $(SLEEP_TIME)
+	@printf "$(GREEN)Pinned to Core $(CPU_CORE) | %d samples (%ds intervals)$(RESET)\n" $(ITERATIONS) $(SLEEP_TIME)
 	@total_cpu=0; total_mem=0; count=0; \
 	for i in $$(seq 1 $(ITERATIONS)); do \
-		setsid $(BIN_PATH) > /dev/null 2>&1 & \
+		$(kill_yams); \
+		setsid taskset -c $(CPU_CORE) $(BIN_PATH) > /dev/null 2>&1 & \
 		MYPID=$$!; \
 		sleep 2; \
 		STAT1=$$(cat /proc/$$MYPID/stat 2>/dev/null); \
@@ -211,7 +228,7 @@ bench-run:
 		UP1=$$(cat /proc/uptime | cut -d' ' -f1); \
 		sleep $(SLEEP_TIME); \
 		STAT2=$$(cat /proc/$$MYPID/stat 2>/dev/null); \
-		if [ -z "$$STAT2" ]; then kill -9 -$$MYPID 2>/dev/null; continue; fi; \
+		if [ -z "$$STAT2" ]; then $(kill_yams); continue; fi; \
 		UTIME2=$$(echo $$STAT2 | cut -d' ' -f14); \
 		STIME2=$$(echo $$STAT2 | cut -d' ' -f15); \
 		UP2=$$(cat /proc/uptime | cut -d' ' -f1); \
@@ -223,6 +240,7 @@ bench-run:
 		HZ=$$(getconf CLK_TCK); \
 		SAMPLE_CPU=$$(awk -v t="$$TICKS" -v h="$$HZ" -v d="$$DIFF" 'BEGIN { printf "%.2f", ((t/h)/d)*100 }'); \
 		kill -9 -$$MYPID > /dev/null 2>&1 || true; \
+		$(kill_yams); \
 		echo "  Sample $$i: CPU $$SAMPLE_CPU%, MEM $$MEM_MB MB"; \
 		total_cpu=$$(echo "$$total_cpu + $$SAMPLE_CPU" | bc); \
 		total_mem=$$(echo "$$total_mem + $$MEM_MB" | bc); \
@@ -231,7 +249,7 @@ bench-run:
 	if [ $$count -gt 0 ]; then \
 		avg_cpu=$$(echo "scale=2; $$total_cpu / $$count" | bc); \
 		avg_mem=$$(echo "scale=2; $$total_mem / $$count" | bc); \
-		printf "\n$(BOLD)AVERAGE STATS (n=$$count):$(RESET)\n"; \
+		printf "\n$(BOLD)AVERAGE STATS (Core $(CPU_CORE), n=$$count):$(RESET)\n"; \
 		printf "  %-15s %s%%\n" "CPU Usage:" "$$avg_cpu"; \
 		printf "  %-15s %s MB\n" "Memory:" "$$avg_mem"; \
 	fi
