@@ -29,6 +29,8 @@ pid_t render_art(int x, int y, int w, int h) {
 
     char decoded[4096];
     url_decode(decoded, (strncmp(input_url, "file://", 7) == 0) ? input_url + 7 : input_url);
+
+    DBG("Render art called");
     
     // We get the safe path, but we won't free it manually. 
     // In the child, _exit() cleans it. In the parent, it's a tiny leak 

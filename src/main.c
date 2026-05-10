@@ -18,7 +18,7 @@
 #include "debug.h"
 
 #define BUFFER_SIZE 131072
-#define ART_DEBOUNCE_MS 200
+#define ART_DEBOUNCE_MS 50
 static char poll_buffer[BUFFER_SIZE];
 static size_t buf_idx = 0;
 
@@ -450,7 +450,6 @@ int main() {
     while (1) {
         long now = get_ms();
         long elapsed_since_change = now - get_last_metadata_change_time();
-        bool debouncing = (elapsed_since_change < ART_DEBOUNCE_MS + 50);
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(STDIN_FILENO, &fds);
@@ -493,23 +492,26 @@ int main() {
             handle_player_data();
         }
 
-        if (resize_pending || (debouncing && elapsed_since_change >= ART_DEBOUNCE_MS)) {
-            static long last_actual_resize = 0;
-            if (now - last_actual_resize > 100) {
-                struct winsize size;
-                if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
-                    if (size.ws_row != LINES || size.ws_col != COLS) {
-                        resizeterm(size.ws_row, size.ws_col);
-                        erase(); 
-                    }
-                }
-                draw_dashboard();
-                last_draw_time = now;
-                last_actual_resize = now;
+        bool needs_art_check = (elapsed_since_change >= ART_DEBOUNCE_MS && elapsed_since_change < ART_DEBOUNCE_MS + 100);
 
-                if (elapsed_since_change >= ART_DEBOUNCE_MS) {
-                    resize_pending = false;
+        if (resize_pending || needs_art_check) {
+            // Check terminal size
+            struct winsize size;
+            if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
+                if (size.ws_row != LINES || size.ws_col != COLS) {
+                    resizeterm(size.ws_row, size.ws_col);
+                    erase(); 
+                    resize_pending = true; // Ensure we re-layout
                 }
+            }
+
+            // Always draw if pending or if we just hit the art debounce timer
+            draw_dashboard();
+            last_draw_time = now;
+
+            // Only clear the pending flag if we aren't still waiting for the art timer
+            if (elapsed_since_change > ART_DEBOUNCE_MS) {
+                resize_pending = false;
             }
         }
 
