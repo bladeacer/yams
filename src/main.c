@@ -16,9 +16,9 @@
 #include "metadata.h"
 #include "utils.h"
 #include "debug.h"
+#include "config.h"
 
 #define BUFFER_SIZE 131072
-#define ART_DEBOUNCE_MS 50
 static char poll_buffer[BUFFER_SIZE];
 static size_t buf_idx = 0;
 
@@ -464,7 +464,7 @@ int main() {
 
         struct timeval tv;
 
-        if (elapsed_since_change < ART_DEBOUNCE_MS) {
+        if (elapsed_since_change < get_art_debounce()) {
             tv.tv_sec = 0;
             tv.tv_usec = 50000;
         } else if (resize_pending) {
@@ -492,7 +492,7 @@ int main() {
             handle_player_data();
         }
 
-        bool needs_art_check = (elapsed_since_change >= ART_DEBOUNCE_MS && elapsed_since_change < ART_DEBOUNCE_MS + 100);
+        bool needs_art_check = (elapsed_since_change >= get_art_debounce() && elapsed_since_change < get_art_debounce() + 100);
 
         if (resize_pending || needs_art_check) {
             // Check terminal size
@@ -510,7 +510,7 @@ int main() {
             last_draw_time = now;
 
             // Only clear the pending flag if we aren't still waiting for the art timer
-            if (elapsed_since_change > ART_DEBOUNCE_MS) {
+            if (elapsed_since_change > get_art_debounce()) {
                 resize_pending = false;
             }
         }

@@ -191,18 +191,15 @@ perf-stat:
 	rm -f perf_results.log; \
 	for i in $$(seq 1 $(PERF_SAMPLES)); do \
 		echo "  Sample $$i/$(PERF_SAMPLES)..."; \
-		perf stat -p $$YPID -ddd -- sleep $(SAMPLE_TIME) 2>&1 >> perf_results.log; \
+		perf stat -p $$YPID -ddd -- sleep $(SAMPLE_TIME) 2>&1 | tee -a perf_results.log; \
 	done; \
 	kill -9 $$YPID > /dev/null 2>&1 || true; \
 	$(kill_yams); \
 	printf "\n$(BOLD)--- OVERALL PERF AVERAGES ---$(RESET)\n"; \
 	awk '{ \
 		gsub(/,/, ""); \
-		if ($$0 ~ /insn per cycle/) { \
-			match($$0, /[0-9]+\.[0-9]+/); \
-			if (RLENGTH > 0) { ipc_sum += substr($$0, RSTART, RLENGTH); ipc_c++ } \
-		} \
-		if ($$0 ~ /tma_/) { \
+		if ($$0 ~ /insn per cycle/) { ipc_sum += $$4; ipc_c++ } \
+		if ($$0 ~ /frontend|backend|speculation|retiring/) { \
 			match($$0, /[0-9]+\.[0-9]+%/); \
 			val = substr($$0, RSTART, RLENGTH-1); \
 			if ($$0 ~ /frontend/) { fe += val; fc++ } \
@@ -212,8 +209,8 @@ perf-stat:
 		} \
 		if ($$0 ~ /branch-misses/) { bm += $$1; bmc++ } \
 		if ($$0 ~ /L1-dcache-load-misses/) { l1 += $$1; l1c++ } \
-	} \
-	END { \
+		} \
+		END { \
 		if (ipc_c>0) { \
 			printf "  %-20s %.2f\n", "Avg IPC:", ipc_sum/ipc_c; \
 			if (fc>0)  printf "  %-20s %.1f%%\n", "Frontend Bound:", fe/fc; \

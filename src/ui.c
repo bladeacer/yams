@@ -12,6 +12,7 @@
 #include "metadata.h"
 #include "utils.h"
 #include "debug.h"
+#include "config.h"
 
 bool resize_pending = false;
 
@@ -58,24 +59,21 @@ void draw_dashboard() {
     update_panels();
     doupdate();
 
-    if (player_active && art_update_requested) {
-        const char *art_src = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
-        char title_sig[2048];
-        snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(m.title), safe_str(m.artist));
-
-        // We check how long since the change globally
+    if (player_active) {
         long elapsed = get_ms() - get_last_metadata_change_time();
 
-        // We force the redraw if we are in the "active" zone for a new song
-        // or if a terminal resize actually happened.
-        bool force_art = (elapsed < 500) || resize_pending;
+        bool song_changed = (art_update_requested && elapsed >= get_art_debounce());
 
-        update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, force_art);
+        bool must_resize = resize_pending;
 
-        if (get_ms() - get_last_metadata_change_time() > 300) {
+        if (song_changed || must_resize) {
+            const char *art_src = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
+            char title_sig[2048];
+            snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(m.title), safe_str(m.artist));
+
+            update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, must_resize);
+
             art_update_requested = false;
         }
     }
-
-    resize_pending = false; 
 }

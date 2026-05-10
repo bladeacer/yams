@@ -29,7 +29,8 @@ sources = [
   'src/terminal.c',
   'src/panes.c',
   'src/art_manager.c',
-  'src/render_utils.c'
+  'src/render_utils.c',
+  'src/config.c'
 ]
 inc = include_directories('src')
 
