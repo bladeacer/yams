@@ -24,7 +24,6 @@ void reset_art() {
     last_metadata_change_time = get_ms();
 }
 
-
 void update_and_render_art(const char* src, const char* sig, int w, int h, bool force) {
     if (!src || strlen(src) < 2) return;
 
@@ -33,7 +32,7 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
 
     if (path_changed || force) {
         if (art_pid > 0) {
-            kill(art_pid, SIGKILL);
+            kill(-art_pid, SIGKILL); 
             waitpid(art_pid, NULL, WNOHANG);
             art_pid = -1;
         }
@@ -43,8 +42,10 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
         render_pending = true;
     }
 
-    if (art_pid > 0 && waitpid(art_pid, NULL, WNOHANG) != 0) {
-        art_pid = -1;
+    int status;
+    pid_t reaped;
+    while ((reaped = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (reaped == art_pid) art_pid = -1;
     }
 
     bool timer_expired = (now - last_metadata_change_time >= get_art_debounce());

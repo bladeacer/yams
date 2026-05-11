@@ -1,6 +1,6 @@
 #include "config.h"
 
-static int art_debounce_ms = 100;
+static int art_debounce_ms = 200;
 
 void set_art_debounce(int ms) {
     if (ms < 0) ms = 0;

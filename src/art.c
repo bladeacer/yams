@@ -52,6 +52,8 @@ pid_t render_art(int x, int y, int w, int h) {
     if (pid < 0) return -1;
 
     if (pid == 0) {
+        setpgid(0, 0);
+
         const char *jp2a_chars = "    ...',;:clodxkO0KXNWM";
         int scaled_w = (int)(w * 1.5);
         char img_src[4096];
