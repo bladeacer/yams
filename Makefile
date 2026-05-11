@@ -101,6 +101,10 @@ debug-flags: ## Debug compiler flags set based on CPU arch
 	@echo "Detected OS:   $(OS)"
 	@echo "Flags sent:    $(FULL_CFLAGS)"
 
+
+check-vendor: # Check CPU vendor
+	@echo "Detected Vendor: $(VENDOR)"
+
 uninstall: ## Remove yams from the system
 	@sudo rm -f /usr/local/bin/yams
 
@@ -179,55 +183,64 @@ perf: release ## Standalone Deep Perf Analysis (Pinned to Core)
 
 perf-stat:
 	@if ! command -v perf >/dev/null; then echo "Error: perf not found."; exit 1; fi
-	@echo "$(CYAN)--- Deep Analysis (Core: $(CPU_CORE)) ---$(RESET)"
 	@$(kill_yams)
-	@TERM=xterm setsid taskset -c $(CPU_CORE) $(BIN_PATH) > /dev/null 2>&1 & \
-	YPID=$$!; \
-	sleep 2; \
-	if ! ps -p $$YPID > /dev/null; then echo "Error: Binary failed to start."; exit 1; fi; \
-	rm -f perf_results.log; \
-	echo "Warming up CPU..."; \
-	sudo perf stat -p $$YPID -- sleep 3 > /dev/null 2>&1; \
-	for i in $$(seq 1 $(PERF_SAMPLES)); do \
-		echo "  Sample $$i/$(PERF_SAMPLES)..."; \
-		sudo perf stat -p $$YPID -ddd -- sleep $(SAMPLE_TIME) >> perf_results.log 2>&1; \
-	done; \
-	kill -9 -$$YPID > /dev/null 2>&1 || true; \
-	$(kill_yams); \
-	printf "\n$(BOLD)--- OVERALL PERF AVERAGES ---$(RESET)\n"; \
-	awk '{ \
-		gsub(/,/, ""); \
-		if ($$0 ~ /insn_per_cycle/) { for(i=1; i<=NF; i++) { if ($$i ~ /^[0-9]+\.[0-9]+$$/) { ipc += $$i; ipcc++; break } } } \
-		if ($$0 ~ /tma_/) { \
-			val = 0; for(i=1; i<=NF; i++) { if ($$i ~ /^[0-9]+\.[0-9]+$$/) { val = $$i; break } } \
-			if ($$0 ~ /tma_frontend_bound/) fe += val; \
-			if ($$0 ~ /tma_backend_bound/)  be += val; \
-			if ($$0 ~ /tma_bad_speculation/) bs += val; \
-			if ($$0 ~ /tma_retiring/)        rt += val; \
-			fec++; \
-		} \
-		if ($$0 ~ /L1-dcache-loads/) l1_ld += $$1; \
-		if ($$0 ~ /L1-dcache-load-misses/) l1_m += $$1; \
-		if ($$0 ~ /branch-instructions/) br_ins += $$1; \
-		if ($$0 ~ /branch-misses/) br_m += $$1; \
-		if ($$0 ~ /llc_miss_rate/) { for(i=1; i<=NF; i++) { if ($$i ~ /^[0-9]+\.[0-9]+$$/) { llc += $$i; llcc++; break } } } \
-	} \
-	END { \
-		if (fec > 0 || ipcc > 0) { \
-			if (ipcc > 0) printf "  %-20s %.2f\n", "Avg IPC:", ipc/ipcc; \
-			if (l1_ld > 0) printf "  %-20s %.2f%%\n", "L1-D Miss Rate:", (l1_m/l1_ld)*100; \
-			if (llcc > 0)  printf "  %-20s %.2f%%\n", "Avg LLC Miss Rate:", llc/llcc; \
-			if (br_ins > 0) printf "  %-20s %.2f%%\n", "Branch Miss Rate:", (br_m/br_ins)*100; \
-			print "---------------------------------"; \
-			if (fec > 0) { \
-				printf "  %-20s %.1f%%\n", "Frontend Bound:", fe/(fec/4); \
-				printf "  %-20s %.1f%%\n", "Backend Bound:", be/(fec/4); \
-				printf "  %-20s %.1f%%\n", "Bad Speculation:", bs/(fec/4); \
-				printf "  %-20s %.1f%%\n", "Retiring:", rt/(fec/4); \
+	@{ \
+		echo "$(CYAN)--- Deep Analysis (Core: $(CPU_CORE) | CPU: $(VENDOR)) ---$(RESET)"; \
+		TERM=xterm setsid taskset -c $(CPU_CORE) $(BIN_PATH) > /dev/null 2>&1 & \
+		YPID=$$!; \
+		sleep 2; \
+		if ! ps -p $$YPID > /dev/null; then echo "Error: Binary failed to start."; exit 1; fi; \
+		rm -f perf_results.log; \
+		echo "Warming up CPU..."; \
+		sudo perf stat -p $$YPID -- sleep 2 > /dev/null 2>&1; \
+		for i in $$(seq 1 $(PERF_SAMPLES)); do \
+			printf "  Sample %d/%d...\r" $$i $(PERF_SAMPLES); \
+			if [ "$(VENDOR)" = "GenuineIntel" ]; then \
+				sudo perf stat -p $$YPID -ddd -e "slots,topdown-fe-bound,topdown-be-bound,topdown-bad-spec,topdown-retiring,instructions,cycles,L1-dcache-loads,L1-dcache-load-misses" -- sleep $(SAMPLE_TIME) >> perf_results.log 2>&1; \
+			else \
+				sudo perf stat -p $$YPID -e instructions,cycles,cache-misses,branch-misses,L1-dcache-load-misses,L1-dcache-loads -- sleep $(SAMPLE_TIME) >> perf_results.log 2>&1; \
+			fi; \
+		done; \
+		echo ""; \
+		kill -9 -$$YPID > /dev/null 2>&1 || true; \
+		$(kill_yams); \
+		printf "\n$(BOLD)--- OVERALL PERF AVERAGES ---$(RESET)\n"; \
+		awk '{ \
+			gsub(/,/, ""); \
+			if ($$0 ~ /<not counted>/ || $$0 ~ /<not supported>/) next; \
+			if ($$0 ~ /instructions/) { ins += $$1; insc++ } \
+			if ($$0 ~ /cycles/) { cyc += $$1; cycc++ } \
+			if ($$0 ~ /topdown-fe-bound/) { fe += $$1; fec++ } \
+			if ($$0 ~ /topdown-be-bound/) { be += $$1 } \
+			if ($$0 ~ /topdown-bad-spec/) { bs += $$1 } \
+			if ($$0 ~ /topdown-retiring/) { rt += $$1 } \
+			if ($$0 ~ /slots/) { sl += $$1 } \
+			if ($$0 ~ /L1-dcache-load-misses/) { l1_m += $$1 } \
+			else if ($$0 ~ /L1-dcache-loads/) { l1_ld += $$1 } \
+			if ($$0 ~ /branch-misses/) { br_m += $$1 } \
+			else if ($$0 ~ /branch/ && !($$0 ~ /miss/)) { br_ins += $$1 } \
+			if ($$0 ~ /llc_miss_rate|LLC-load-misses/) { \
+				for(i=1; i<=NF; i++) { if ($$i ~ /^[0-9]+\.[0-9]+$$/) { llc += $$i; llcc++; break } } \
 			} \
 		} \
-	}' perf_results.log; \
-	rm -f perf_results.log
+		END { \
+			if (insc > 0 && cyc > 0) printf "  %-20s %.2f\n", "Avg IPC:", ins/cyc; \
+			if (l1_ld > 0) printf "  %-20s %.2f%%\n", "Avg L1-D Miss Rate:", (l1_m/l1_ld)*100; \
+			if (br_ins > 0) printf "  %-20s %.2f%%\n", "Avg Branch Miss Rate:", (br_m/br_ins)*100; \
+			if (llcc > 0)  printf "  %-20s %.2f%%\n", "Avg LLC Miss Rate:", llc/llcc; \
+			if (fec > 0 && sl > 0) { \
+				print "---------------------------------"; \
+				printf "  %-20s %.1f%%\n", "Frontend Bound:", (fe/sl)*100; \
+				printf "  %-20s %.1f%%\n", "Backend Bound:", (be/sl)*100; \
+				printf "  %-20s %.1f%%\n", "Bad Speculation:", (bs/sl)*100; \
+				printf "  %-20s %.1f%%\n", "Retiring:", (rt/sl)*100; \
+			} else { \
+				print "---------------------------------"; \
+				print "  [TMA Metrics only available on Intel Hardware]"; \
+			} \
+		}' perf_results.log; \
+		rm -f perf_results.log; \
+	}
 
 bench-run:
 	@printf "\n$(CYAN)[%s Version]$(RESET)\n" "$(RUN_NAME)"
@@ -237,15 +250,14 @@ bench-run:
 	MYPID=$$!; \
 	sleep 2; \
 	for i in $$(seq 1 $(ITERATIONS)); do \
-		$(kill_yams) ; \
 		STAT1=$$(cat /proc/$$MYPID/stat 2>/dev/null); \
-		if [ -z "$$STAT1" ]; then continue; fi; \
+		if [ -z "$$STAT1" ]; then break; fi; \
 		UTIME1=$$(echo $$STAT1 | cut -d' ' -f14); \
 		STIME1=$$(echo $$STAT1 | cut -d' ' -f15); \
 		UP1=$$(cat /proc/uptime | cut -d' ' -f1); \
 		sleep $(SLEEP_TIME); \
 		STAT2=$$(cat /proc/$$MYPID/stat 2>/dev/null); \
-		if [ -z "$$STAT2" ]; then $(kill_yams) ; continue; fi; \
+		if [ -z "$$STAT2" ]; then break; fi; \
 		UTIME2=$$(echo $$STAT2 | cut -d' ' -f14); \
 		STIME2=$$(echo $$STAT2 | cut -d' ' -f15); \
 		UP2=$$(cat /proc/uptime | cut -d' ' -f1); \
@@ -253,6 +265,7 @@ bench-run:
 		PAGE_SIZE=$$(getconf PAGESIZE); \
 		MEM_MB=$$(echo "scale=2; ($$SAMPLE_MEM * $$PAGE_SIZE) / 1048576" | bc); \
 		DIFF=$$(echo "scale=4; $$UP2 - $$UP1" | bc); \
+		if [ "$$(echo "$$DIFF <= 0" | bc)" -eq 1 ]; then DIFF=0.0001; fi; \
 		TICKS=$$(( (UTIME2 + STIME2) - (UTIME1 + STIME1) )); \
 		HZ=$$(getconf CLK_TCK); \
 		SAMPLE_CPU=$$(awk -v t="$$TICKS" -v h="$$HZ" -v d="$$DIFF" 'BEGIN { printf "%.2f", ((t/h)/d)*100 }'); \
@@ -269,4 +282,4 @@ bench-run:
 		printf "  %-15s %s MB\n" "Memory:" "$$avg_mem"; \
 	fi; \
 	kill -9 -$$MYPID > /dev/null 2>&1 || true; \
-	$(kill_yams) ; \
+	$(kill_yams);
