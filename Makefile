@@ -196,9 +196,9 @@ perf-stat:
 		for i in $$(seq 1 $(PERF_SAMPLES)); do \
 			printf "  Sample %d/%d...\r" $$i $(PERF_SAMPLES); \
 			if [ "$(VENDOR)" = "GenuineIntel" ]; then \
-				sudo perf stat -p $$YPID -ddd -e "slots,topdown-fe-bound,topdown-be-bound,topdown-bad-spec,topdown-retiring,instructions,cycles,L1-dcache-loads,L1-dcache-load-misses" -- sleep $(SAMPLE_TIME) >> perf_results.log 2>&1; \
+				sudo perf stat -p $$YPID -ddd -e "slots,topdown-fe-bound,topdown-be-bound,topdown-bad-spec,topdown-retiring,instructions,cycles,L1-dcache-loads,L1-dcache-load-misses,LLC-loads,LLC-load-misses,branches,branch-misses" -- sleep $(SAMPLE_TIME) >> perf_results.log 2>&1; \
 			else \
-				sudo perf stat -p $$YPID -e instructions,cycles,cache-misses,branch-misses,L1-dcache-load-misses,L1-dcache-loads -- sleep $(SAMPLE_TIME) >> perf_results.log 2>&1; \
+				sudo perf stat -p $$YPID -e instructions,cycles,L1-dcache-loads,L1-dcache-load-misses,LLC-loads,LLC-load-misses,branches,branch-misses -- sleep $(SAMPLE_TIME) >> perf_results.log 2>&1; \
 			fi; \
 		done; \
 		echo ""; \
@@ -208,35 +208,31 @@ perf-stat:
 		awk '{ \
 			gsub(/,/, ""); \
 			if ($$0 ~ /<not counted>/ || $$0 ~ /<not supported>/) next; \
-			if ($$0 ~ /instructions/) { ins += $$1; insc++ } \
-			if ($$0 ~ /cycles/) { cyc += $$1; cycc++ } \
+			if ($$0 ~ /instructions/) { ins += $$1 } \
+			if ($$0 ~ /cycles/)       { cyc += $$1 } \
+			if ($$0 ~ /L1-dcache-load-misses/) { l1_m += $$1 } \
+			else if ($$0 ~ /L1-dcache-loads/)  { l1_ld += $$1 } \
+			if ($$0 ~ /LLC-load-misses/) { llc_m += $$1 } \
+			else if ($$0 ~ /LLC-loads/)  { llc_ld += $$1 } \
+			if ($$0 ~ /branch-misses/) { br_m += $$1 } \
+			else if ($$0 ~ /branch/)   { br_ins += $$1 } \
 			if ($$0 ~ /topdown-fe-bound/) { fe += $$1; fec++ } \
 			if ($$0 ~ /topdown-be-bound/) { be += $$1 } \
 			if ($$0 ~ /topdown-bad-spec/) { bs += $$1 } \
 			if ($$0 ~ /topdown-retiring/) { rt += $$1 } \
 			if ($$0 ~ /slots/) { sl += $$1 } \
-			if ($$0 ~ /L1-dcache-load-misses/) { l1_m += $$1 } \
-			else if ($$0 ~ /L1-dcache-loads/) { l1_ld += $$1 } \
-			if ($$0 ~ /branch-misses/) { br_m += $$1 } \
-			else if ($$0 ~ /branch/ && !($$0 ~ /miss/)) { br_ins += $$1 } \
-			if ($$0 ~ /llc_miss_rate|LLC-load-misses/) { \
-				for(i=1; i<=NF; i++) { if ($$i ~ /^[0-9]+\.[0-9]+$$/) { llc += $$i; llcc++; break } } \
-			} \
 		} \
 		END { \
-			if (insc > 0 && cyc > 0) printf "  %-20s %.2f\n", "Avg IPC:", ins/cyc; \
+			if (cyc > 0) printf "  %-20s %.2f\n", "Avg IPC:", ins/cyc; \
 			if (l1_ld > 0) printf "  %-20s %.2f%%\n", "Avg L1-D Miss Rate:", (l1_m/l1_ld)*100; \
+			if (llc_ld > 0) printf "  %-20s %.2f%%\n", "Avg LLC Miss Rate:", (llc_m/llc_ld)*100; \
 			if (br_ins > 0) printf "  %-20s %.2f%%\n", "Avg Branch Miss Rate:", (br_m/br_ins)*100; \
-			if (llcc > 0)  printf "  %-20s %.2f%%\n", "Avg LLC Miss Rate:", llc/llcc; \
 			if (fec > 0 && sl > 0) { \
 				print "---------------------------------"; \
 				printf "  %-20s %.1f%%\n", "Frontend Bound:", (fe/sl)*100; \
 				printf "  %-20s %.1f%%\n", "Backend Bound:", (be/sl)*100; \
 				printf "  %-20s %.1f%%\n", "Bad Speculation:", (bs/sl)*100; \
 				printf "  %-20s %.1f%%\n", "Retiring:", (rt/sl)*100; \
-			} else { \
-				print "---------------------------------"; \
-				print "  [TMA Metrics only available on Intel Hardware]"; \
 			} \
 		}' perf_results.log; \
 		rm -f perf_results.log; \
