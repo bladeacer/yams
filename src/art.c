@@ -55,6 +55,7 @@ pid_t render_art(int x, int y, int w, int h) {
         setpgid(0, 0);
 
         const char *jp2a_chars = "    ...',;:clodxkO0KXNWM";
+
         int scaled_w = (int)(w * 1.5);
         char img_src[4096];
         int use_ff = needs_ffmpeg(decoded, input_url);
