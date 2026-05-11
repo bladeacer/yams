@@ -56,6 +56,7 @@ pid_t render_art(int x, int y, int w, int h) {
         int scaled_w = (int)(w * 1.5);
         char img_src[4096];
         int use_ff = needs_ffmpeg(decoded, input_url);
+        const char *final_src = use_ff ? img_src : decoded;
 
         if (use_ff) {
             snprintf(img_src, sizeof(img_src), "/dev/shm/yams_frame_%d.png", getpid());
@@ -65,23 +66,25 @@ pid_t render_art(int x, int y, int w, int h) {
                      (strncmp(input_url, "http", 4) == 0) ? input_url : safe_path, img_src);
             if (system(ff_cmd) != 0) _exit(1);
         } else {
-            snprintf(img_src, sizeof(img_src), "%s", decoded);
+            snprintf(img_src, sizeof(img_src), "%s", final_src);
         }
 
+        const char *magick_input = use_ff ? img_src : safe_path;
+
         if (get_preferred_renderer() == 1) { // jp2a
-            // jp2a doesn't handle transparency well; convert to jpg stream
             snprintf(cmd_buf, sizeof(cmd_buf),
-                     "magick \"%s\" -fuzz 10%% -trim +repage -background black -alpha remove jpg:- 2>/dev/null | "
-                     "jp2a --chars=\"%s\" --width=%d --height=%d --colors -",
-                     img_src, jp2a_chars, w, h);
+                     "magick %s -fuzz 10%% -trim +repage -thumbnail %dx%d! "
+                     "-gravity center -background black -extent %dx%d -alpha remove jpg:- 2>/dev/null | "
+                     "jp2a --chars=\"%s\" --width=%d --height=%d --colors - 2>/dev/null",
+                     magick_input, scaled_w, h, scaled_w, h, jp2a_chars, w, h);
         } else { // chafa
-            // Keep PNG stream to preserve transparency for Chafa
-            // We use scaled_w in the --size flag to preserve your 1.5x width preference
             snprintf(cmd_buf, sizeof(cmd_buf),
-                     "magick \"%s\" -fuzz 10%% -trim +repage png:- 2>/dev/null | "
+                     "magick %s -fuzz 10%% -trim +repage -thumbnail %dx%d! "
+                     "-gravity center -background black -extent %dx%d png:- 2>/dev/null | "
                      "chafa --format symbols --symbols \"[%s]\" --fg-only --fill none --bg black "
-                     "--stretch --size %dx%d -",
-                     img_src, jp2a_chars, scaled_w, h);
+                     "--probe off -c 256 --optimize 0 --dither ordered --dither-intensity 0.3 "
+                     "--size %dx%d - 2>/dev/null",
+                     magick_input, scaled_w, h, scaled_w, h, jp2a_chars, w, h);
         }
 
         printf("\x1b[s");
