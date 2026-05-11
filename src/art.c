@@ -83,7 +83,7 @@ pid_t render_art(int x, int y, int w, int h) {
                      "-gravity center -background black -extent %dx%d png:- 2>/dev/null | "
                      "chafa --format symbols --symbols \"[%s]\" --fg-only --fill none --bg black "
                      "--probe off -c 256 --optimize 0 --dither ordered --dither-intensity 0.3 "
-                     "--size %dx%d - 2>/dev/null",
+                     "--stretch --size %dx%d - 2>/dev/null",
                      magick_input, scaled_w, h, scaled_w, h, jp2a_chars, w, h);
         }
 
