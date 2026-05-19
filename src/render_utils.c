@@ -64,8 +64,7 @@ void draw_help_text(WINDOW *win, int y, int x) {
     snprintf(seek_str, sizeof(seek_str), "Seek: %ds", get_seek_interval());
     draw_item(win, "-/+", seek_str, &cur_y, &cur_x, x, max_h, max_w);
 
-    const char *r_name = (get_preferred_renderer() == 1) ? "jp2a" : "chafa";
-    snprintf(seek_str, sizeof(seek_str), "Art: %s", r_name);
+    snprintf(seek_str, sizeof(seek_str), "Art: %s", get_braille_mode() ? "braille" : "ascii");
     draw_item(win, "a", seek_str, &cur_y, &cur_x, x, max_h, max_w);
     wattroff(win, A_BOLD);
 }

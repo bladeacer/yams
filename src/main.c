@@ -196,10 +196,10 @@ void show_seek_input() {
     resize_pending = true;
 }
 
-void show_renderer_selection() {
+void show_braille_toggle() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
-    int h = 6, w = 35;
+    int h = 6, w = 40;
     int sy = (max_y - h) / 2;
     int sx = (max_x - w) / 2;
 
@@ -208,25 +208,21 @@ void show_renderer_selection() {
     
     wbkgd(awin, COLOR_PAIR(3));
     box(awin, 0, 0);
-    mvwprintw(awin, 0, 2, " Select Art Renderer ");
-    mvwprintw(awin, 1, 2, "[0] chafa (Default)");
-    mvwprintw(awin, 2, 2, "[1] jp2a (Native)");
+    int current = get_braille_mode();
+    mvwprintw(awin, 0, 2, " Art Mode ");
+    mvwprintw(awin, 1, 2, "[b] Toggle braille mode");
+    mvwprintw(awin, 2, 2, "Current: %s", current ? "braille" : "ascii");
     mvwprintw(awin, 4, 2, "Press any other key to cancel");
-    mvwprintw(awin, 3, 2, "Choice: ");
 
     update_panels();
     doupdate();
 
     curs_set(1);
-    int ch = mvwgetch(awin, 3, 10);
+    int ch = mvwgetch(awin, 3, 2);
     curs_set(0);
 
-    if (ch == '1') {
-        set_preferred_renderer(1);
-    } else if (ch == '0') {
-        set_preferred_renderer(0);
-    }
-    // Any other key simply falls through and exits
+    if (ch == 'b' || ch == 'B')
+        set_braille_mode(!current);
 
     del_panel(apanel);
     delwin(awin);
@@ -255,7 +251,7 @@ static void handle_keypress(int ch, long now) {
             run_player_cmd("position", seek_cmd);
             break;
         case 'a':
-            show_renderer_selection();
+            show_braille_toggle();
             reset_art();
             resize_pending = true;
             break;

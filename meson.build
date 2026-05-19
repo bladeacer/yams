@@ -19,6 +19,15 @@ if not panelw.found()
   panelw = cc.find_library('panelw', required : true)
 endif
 
+libavformat = dependency('libavformat', required : true)
+libavcodec = dependency('libavcodec', required : true)
+libswscale = dependency('libswscale', required : true)
+libavutil = dependency('libavutil', required : true)
+
+if not get_option('logging')
+  add_project_arguments('-DNDEBUG', language: 'c')
+endif
+
 sources = [
   'src/main.c',
   'src/ui.c',
@@ -30,14 +39,20 @@ sources = [
   'src/panes.c',
   'src/art_manager.c',
   'src/render_utils.c',
-  'src/config.c'
+  'src/config.c',
+  'lib/img2ascii.c'
 ]
-inc = include_directories('src')
+inc = include_directories('include', 'lib')
 
 executable('yams',
   sources,
-  # 4. Add panelw to the dependencies list
-  dependencies : [ncursesw, panelw, m_dep],
+  dependencies : [ncursesw, panelw, m_dep, libavformat, libavcodec, libswscale, libavutil],
   include_directories : inc,
   install : true
 )
+
+cmocka_dep = dependency('cmocka', required: false)
+if not cmocka_dep.found()
+  cmocka_dep = subproject('cmocka').get_variable('cmocka_dep')
+endif
+subdir('tests')

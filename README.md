@@ -56,11 +56,7 @@ Built on the shoulders of giants.
 
 - ncurses (TUI)
 - [playerctl](https://github.com/altdesktop/playerctl)
-- ffmpeg (Extract image thumbnail from audio file)
-- imagemagick (Image processing)
-- [chafa](https://github.com/hpjansson/chafa) or
-[jp2a](https://github.com/cslarsen/jp2a) (ASCII renderer, prefer chafa by default)
-- sed (Regex replace)
+- ffmpeg (development libraries: libavformat, libavcodec, libswscale, libavutil)
 
 ### Dev Dependencies
 
