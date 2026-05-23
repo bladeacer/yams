@@ -79,7 +79,8 @@ void draw_metadata_line(WINDOW *win, int *y, const char *label, const char *valu
 
     mvwaddstr(win, *y, 0, label);
     int val_x = strlen(label);
-    int max_w = getmaxx(win) - val_x - 1;
+    int max_w = getmaxx(win) - val_x;
+    if (max_w < 0) max_w = 0;
 
     mvwaddnstr(win, *y, val_x, value, max_w);
     (*y)++;
@@ -90,7 +91,7 @@ void draw_metadata_line(WINDOW *win, int *y, const char *label, const char *valu
 
 void clear_art_area(void) {
     if (geo.art_w <= 0 || geo.art_h <= 0) return;
-    int art_x = 1, art_y = 1;
+    int art_x = 2, art_y = 0;
     int abs_y = 1 + art_y;
     int abs_x = 1 + art_x;
     char *clear = malloc((size_t)geo.art_w + 1);

@@ -166,8 +166,19 @@ static void composite_alpha_on_black(uint8_t *pixels, int w, int h) {
 static void render_chafa(uint8_t *pixels, int img_w, int img_h,
                          int x, int y, int w, int h, int braille) {
     ChafaSymbolMap *symbol_map = chafa_symbol_map_new();
-    chafa_symbol_map_add_by_tags(symbol_map,
-        braille ? CHAFA_SYMBOL_TAG_BRAILLE : CHAFA_SYMBOL_TAG_ASCII);
+    if (braille) {
+        chafa_symbol_map_add_by_tags(symbol_map, CHAFA_SYMBOL_TAG_BRAILLE);
+    } else {
+        static const char jp2a_chars[] = "    ...',;:clodxkO0KXNWM";
+        bool seen[256] = {0};
+        for (const char *p = jp2a_chars; *p; p++) {
+            unsigned char c = (unsigned char)*p;
+            if (!seen[c]) {
+                seen[c] = true;
+                chafa_symbol_map_add_by_range(symbol_map, c, c);
+            }
+        }
+    }
 
     ChafaCanvasConfig *config = chafa_canvas_config_new();
     chafa_canvas_config_set_geometry(config, w, h);

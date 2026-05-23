@@ -41,7 +41,7 @@ void draw_dashboard() {
     bool identity_changed = (strcmp(m.title, last_known_title) != 0 || 
                          strcmp(m.artist, last_known_artist) != 0);
 
-    if (identity_changed) {
+    if (identity_changed && (m.title[0] || m.artist[0])) {
         strncpy(last_known_title, m.title, sizeof(last_known_title)-1);
         strncpy(last_known_artist, m.artist, sizeof(last_known_artist)-1);
         reset_art();

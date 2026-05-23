@@ -33,7 +33,7 @@ bool parse_block(char *block) {
 
             switch (key[0]) {
                 case 'T': // TITLE
-                    if (strcmp(m.title, val) != 0) {
+                    if (val[0] && strcmp(m.title, val) != 0) {
                         strncpy(m.title, val, sizeof(m.title) - 1);
                         song_changed = true;
                         m.lyric_count = 0;
@@ -46,7 +46,7 @@ bool parse_block(char *block) {
                             strncpy(m.art_url, val, sizeof(m.art_url) - 1);
                         }
                     } else if (key[2] == 'T') { // ARTIST
-                        if (strcmp(m.artist, val) != 0) {
+                        if (val[0] && strcmp(m.artist, val) != 0) {
                             strncpy(m.artist, val, sizeof(m.artist) - 1);
                             song_changed = true;
                         }
