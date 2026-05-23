@@ -319,6 +319,8 @@ static char *get_cached_path(const char *url) {
     return path;
 }
 
+static int cache_version = 0;
+
 static bool download_to_cache(const char *url, const char *cache_path) {
     AVIOContext *io = NULL;
     if (avio_open(&io, url, AVIO_FLAG_READ) < 0) return false;
@@ -333,6 +335,7 @@ static bool download_to_cache(const char *url, const char *cache_path) {
     }
     fclose(f);
     avio_close(io);
+    cache_version++;
     return true;
 }
 
@@ -348,6 +351,12 @@ static char *format_size(double bytes) {
 }
 
 char *get_cache_info(void) {
+    static int last_version = -1;
+    static char cached[128] = "";
+
+    if (last_version == cache_version && cached[0])
+        return strdup(cached);
+
     char *cache_dir = get_cache_dir();
     char *result = NULL;
     DIR *d = opendir(cache_dir);
@@ -374,6 +383,8 @@ char *get_cache_info(void) {
         asprintf(&result, "Art cache: empty");
     }
     free(cache_dir);
+    snprintf(cached, sizeof(cached), "%s", result);
+    last_version = cache_version;
     return result;
 }
 
@@ -398,11 +409,16 @@ char *clear_art_cache(void) {
         char *size_str = format_size(freed);
         asprintf(&result, "Cleared %s (%d file%s)", size_str, removed, removed == 1 ? "" : "s");
         free(size_str);
+        cache_version++;
     } else {
         asprintf(&result, "Cache directory not found");
     }
     free(cache_dir);
     return result;
+}
+
+void art_cache_bump(void) {
+    cache_version++;
 }
 
 char *render_art_to_buffer(int x, int y, int w, int h,

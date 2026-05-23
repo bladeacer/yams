@@ -8,5 +8,6 @@ char *render_art_to_buffer(int x, int y, int w, int h,
 
 char *get_cache_info(void);
 char *clear_art_cache(void);
+void art_cache_bump(void);
 
 #endif

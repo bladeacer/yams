@@ -56,9 +56,8 @@ void draw_dashboard() {
     if (player_active && !was_active) {
         clear_art_area();
         werase(main_win);
-        if (!art_update_requested) {
+        if (!art_update_requested)
             reset_art();
-        }
     }
 
     bool identity_changed = (strcmp(snap_title, last_known_title) != 0 ||
@@ -78,13 +77,23 @@ void draw_dashboard() {
 
     if (!player_active) {
         draw_fallback_screen(main_win, geo.max_y - 2, geo.max_x - 2);
-        update_panels();
-        int art_top = 2;
-        for (int r = 0; r < geo.art_h && art_top + r <= LINES; r++)
-            wredrawln(curscr, art_top - 1 + r, 1);
     } else {
         if (meta_sub) render_metadata_pane(meta_sub);
         if (lyr_sub)  render_lyrics_pane(lyr_sub);
+    }
+
+    update_panels();
+
+    if (player_active && !was_active && curscr) {
+        int mh = getmaxy(main_win);
+        for (int r = 0; r < mh; r++)
+            wredrawln(curscr, 1 + r, 1);
+    }
+
+    if (!player_active) {
+        int art_top = 2;
+        for (int r = 0; r < geo.art_h && art_top + r <= LINES; r++)
+            wredrawln(curscr, art_top - 1 + r, 1);
     }
 
     if (status_msg[0]) {

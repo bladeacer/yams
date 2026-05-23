@@ -66,18 +66,13 @@ void draw_help_text(WINDOW *win, int y, int x) {
     draw_item(win, "r", "Retry Art", &cur_y, &cur_x, x, max_h, max_w);
 
     {
-        static long last_cr = 0;
         static char clbl[64] = "";
-        long now = get_ms();
-        if (now - last_cr > 3000 || !clbl[0]) {
-            char *info = get_cache_info();
-            if (info) {
-                const char *v = strchr(info, ':');
-                v = v ? v + 2 : info;
-                snprintf(clbl, sizeof(clbl), "%s", v);
-                free(info);
-            }
-            last_cr = now;
+        char *info = get_cache_info();
+        if (info) {
+            const char *v = strchr(info, ':');
+            v = v ? v + 2 : info;
+            snprintf(clbl, sizeof(clbl), "%s", v);
+            free(info);
         }
         draw_item(win, "c", clbl[0] ? clbl : "Cache", &cur_y, &cur_x, x, max_h, max_w);
     }
