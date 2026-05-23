@@ -5,6 +5,7 @@
 
 void render_metadata_pane(WINDOW *win) {
     if (!win) return;
+    redrawwin(win);
     werase(win);
 
     char snap_status[64], snap_player[64], snap_length[32];
@@ -44,6 +45,7 @@ void render_metadata_pane(WINDOW *win) {
 
 void render_lyrics_pane(WINDOW *win) {
     if (!win) return;
+    redrawwin(win);
     werase(win);
     
     int h, w;

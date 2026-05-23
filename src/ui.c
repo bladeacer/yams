@@ -31,11 +31,11 @@ void draw_dashboard() {
     char snap_artist[512];
     char snap_art_url[2048];
     char snap_path[2048];
-    strncpy(snap_status, m.status, sizeof(snap_status) - 1);
-    strncpy(snap_title, m.title, sizeof(snap_title) - 1);
-    strncpy(snap_artist, m.artist, sizeof(snap_artist) - 1);
-    strncpy(snap_art_url, m.art_url, sizeof(snap_art_url) - 1);
-    strncpy(snap_path, m.file_path, sizeof(snap_path) - 1);
+    strncpy(snap_status, m.status, sizeof(snap_status) - 1); snap_status[sizeof(snap_status) - 1] = '\0';
+    strncpy(snap_title, m.title, sizeof(snap_title) - 1); snap_title[sizeof(snap_title) - 1] = '\0';
+    strncpy(snap_artist, m.artist, sizeof(snap_artist) - 1); snap_artist[sizeof(snap_artist) - 1] = '\0';
+    strncpy(snap_art_url, m.art_url, sizeof(snap_art_url) - 1); snap_art_url[sizeof(snap_art_url) - 1] = '\0';
+    strncpy(snap_path, m.file_path, sizeof(snap_path) - 1); snap_path[sizeof(snap_path) - 1] = '\0';
 
     if (max_x != geo.max_x || max_y != geo.max_y) {
         recreate_layout();
