@@ -14,7 +14,8 @@ void cleanup_ui(int sig);
 void reset_art();
 long get_last_metadata_change_time();
 
-// This remains in ui.c
+// These remain in ui.c
 void draw_dashboard();
+void show_art_mode_selector();
 
 #endif

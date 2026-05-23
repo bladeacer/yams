@@ -1,7 +1,7 @@
 #ifndef ART_MANAGER_H
 #define ART_MANAGER_H
 
-#include <sys/types.h>
+#include <stdbool.h>
 
 extern bool art_refresh_requested;
 

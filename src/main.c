@@ -197,39 +197,6 @@ void show_seek_input() {
     resize_pending = true;
 }
 
-void show_braille_toggle() {
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    int h = 6, w = 40;
-    int sy = (max_y - h) / 2;
-    int sx = (max_x - w) / 2;
-
-    WINDOW *awin = newwin(h, w, sy, sx);
-    PANEL *apanel = new_panel(awin);
-    
-    wbkgd(awin, COLOR_PAIR(3));
-    box(awin, 0, 0);
-    int current = get_braille_mode();
-    mvwprintw(awin, 0, 2, " Art Mode ");
-    mvwprintw(awin, 1, 2, "[b] Toggle braille mode");
-    mvwprintw(awin, 2, 2, "Current: %s", current ? "braille" : "ascii");
-    mvwprintw(awin, 4, 2, "Press any other key to cancel");
-
-    update_panels();
-    doupdate();
-
-    curs_set(1);
-    int ch = mvwgetch(awin, 3, 2);
-    curs_set(0);
-
-    if (ch == 'b' || ch == 'B')
-        set_braille_mode(!current);
-
-    del_panel(apanel);
-    delwin(awin);
-    resize_pending = true;
-}
-
 static void handle_keypress(int ch, long now);
 void show_help_overlay(long now);
 
@@ -254,9 +221,7 @@ static void handle_keypress(int ch, long now) {
             resize_pending = true;
             break;
         case 'a':
-            show_braille_toggle();
-            reset_art();
-            resize_pending = true;
+            show_art_mode_selector();
             break;
         case '+':
             set_seek_interval(get_seek_interval() + 5);
@@ -342,6 +307,7 @@ void show_help_overlay(long now) {
     HELP_L("j/k",   "Seek Interval");
     HELP_L("-/+",   "Adjust Seek Interval");
     HELP_L("s",     "Set Seek Interval");
+    HELP_L("a",     "Art Mode Selector");
     HELP_L("ESC/?", "Close this menu");
 
     wattron(help_win, A_DIM);

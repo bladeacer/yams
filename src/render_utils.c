@@ -1,5 +1,6 @@
 #include "render_utils.h"
 #include "utils.h"
+#include "config.h"
 #include "debug.h"
 #include "metadata.h"
 #include "layout.h"
@@ -67,7 +68,7 @@ void draw_help_text(WINDOW *win, int y, int x) {
     snprintf(seek_str, sizeof(seek_str), "Seek: %ds", get_seek_interval());
     draw_item(win, "-/+", seek_str, &cur_y, &cur_x, x, max_h, max_w);
 
-    snprintf(seek_str, sizeof(seek_str), "Art: %s", get_braille_mode() ? "braille" : "ascii");
+    snprintf(seek_str, sizeof(seek_str), "Art: %s", art_modes[get_art_mode()].name);
     draw_item(win, "a", seek_str, &cur_y, &cur_x, x, max_h, max_w);
     wattroff(win, A_BOLD);
 }

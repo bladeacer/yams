@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include "utils.h"
+#include "config.h"
 
 long get_ms() {
     struct timespec ts;
@@ -47,12 +48,14 @@ void set_seek_interval(int seconds) {
     seek_interval = seconds;
 }
 
-static int braille_mode = 0;
+static int art_mode = 0;
 
-int get_braille_mode(void) {
-    return braille_mode;
+int get_art_mode(void) {
+    return art_mode;
 }
 
-void set_braille_mode(int mode) {
-    braille_mode = mode ? 1 : 0;
+void set_art_mode(int mode) {
+    if (mode < 0) mode = 0;
+    if (mode >= ART_MODE_COUNT) mode = ART_MODE_COUNT - 1;
+    art_mode = mode;
 }

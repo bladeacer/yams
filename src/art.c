@@ -1,9 +1,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <ncurses.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -164,12 +161,11 @@ static void composite_alpha_on_black(uint8_t *pixels, int w, int h) {
 }
 
 static void render_chafa_to_gs(uint8_t *pixels, int img_w, int img_h,
-                                int x, int y, int w, int h, int braille,
-                                GString *out) {
+                                int x, int y, int w, int h,
+                                ChafaSymbolTags tags, GString *out) {
     ChafaSymbolMap *symbol_map = chafa_symbol_map_new();
-    if (braille) {
-        chafa_symbol_map_add_by_tags(symbol_map, CHAFA_SYMBOL_TAG_BRAILLE);
-    } else {
+
+    if (tags == 0) {
         static const char jp2a_chars[] = "    ...',;:clodxkO0KXNWM";
         bool seen[256] = {0};
         for (const char *p = jp2a_chars; *p; p++) {
@@ -179,6 +175,8 @@ static void render_chafa_to_gs(uint8_t *pixels, int img_w, int img_h,
                 chafa_symbol_map_add_by_range(symbol_map, c, c);
             }
         }
+    } else {
+        chafa_symbol_map_add_by_tags(symbol_map, tags);
     }
 
     ChafaCanvasConfig *config = chafa_canvas_config_new();
@@ -233,7 +231,31 @@ static void render_chafa_to_gs(uint8_t *pixels, int img_w, int img_h,
     chafa_symbol_map_unref(symbol_map);
 }
 
-char *render_art_to_buffer(int x, int y, int w, int h) {
+static void render_pixel_to_gs(uint8_t *pixels, int img_w, int img_h,
+                                int w, int h,
+                                ChafaPixelMode pixel_mode, GString *out) {
+    ChafaCanvasConfig *config = chafa_canvas_config_new();
+    chafa_canvas_config_set_geometry(config, w, h);
+    chafa_canvas_config_set_preprocessing_enabled(config, FALSE);
+    chafa_canvas_config_set_bg_color(config, 0x000000);
+    chafa_canvas_config_set_pixel_mode(config, pixel_mode);
+
+    ChafaCanvas *canvas = chafa_canvas_new(config);
+    chafa_canvas_draw_all_pixels(canvas, CHAFA_PIXEL_RGBA8_UNASSOCIATED,
+                                 pixels, img_w, img_h, img_w * 4);
+
+    GString *gs = chafa_canvas_print(canvas, NULL);
+    if (gs) {
+        g_string_append(out, gs->str);
+        g_string_free(gs, TRUE);
+    }
+
+    chafa_canvas_unref(canvas);
+    chafa_canvas_config_unref(config);
+}
+
+char *render_art_to_buffer(int x, int y, int w, int h,
+                            ChafaSymbolTags tags, ChafaPixelMode pixel_mode, int is_ascii) {
     char *input_url = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     if (!input_url || strlen(input_url) < 5) return NULL;
 
@@ -256,24 +278,35 @@ char *render_art_to_buffer(int x, int y, int w, int h) {
     }
 
     GString *out = g_string_sized_new(4096);
-    int braille = get_braille_mode();
 
-    if (!braille) {
-        int ascii_w = (int)(w * 1.5);
-        if (ascii_w < 1) ascii_w = 1;
-        int rh = h > 0 ? h : 1;
+    if (pixel_mode == CHAFA_PIXEL_MODE_SYMBOLS) {
+        if (is_ascii) {
+            int ascii_w = (int)(w * 1.5);
+            if (ascii_w < 1) ascii_w = 1;
+            int rh = h > 0 ? h : 1;
 
-        uint8_t *resized = malloc((size_t)ascii_w * rh * 4);
-        if (resized) {
-            stbir_resize_uint8(pixels, img_w, img_h, 0,
-                               resized, ascii_w, rh, 0, 4);
-            render_chafa_to_gs(resized, ascii_w, rh, x, y, w, rh, 0, out);
-            free(resized);
+            uint8_t *resized = malloc((size_t)ascii_w * rh * 4);
+            if (resized) {
+                stbir_resize_uint8(pixels, img_w, img_h, 0,
+                                   resized, ascii_w, rh, 0, 4);
+                render_chafa_to_gs(resized, ascii_w, rh, x, y, w, rh, tags, out);
+                free(resized);
+            } else {
+                render_chafa_to_gs(pixels, img_w, img_h, x, y, w, h, tags, out);
+            }
         } else {
-            render_chafa_to_gs(pixels, img_w, img_h, x, y, w, h, 0, out);
+            render_chafa_to_gs(pixels, img_w, img_h, x, y, w, h, tags, out);
         }
     } else {
-        render_chafa_to_gs(pixels, img_w, img_h, x, y, w, h, 1, out);
+        char clear[512];
+        int cw = w < 510 ? w : 510;
+        memset(clear, ' ', cw);
+        clear[cw] = '\0';
+        for (int r = 0; r < h; r++)
+            g_string_append_printf(out, "\x1b[%d;%dH%s", y + 1 + r, x + 1, clear);
+
+        g_string_append_printf(out, "\x1b[%d;%dH", y + 1, x + 1);
+        render_pixel_to_gs(pixels, img_w, img_h, w, h, pixel_mode, out);
     }
 
     free(pixels);

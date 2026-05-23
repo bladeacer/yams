@@ -12,12 +12,14 @@ Yet another media screensaver.
 - CJK/Unicode Support (`ncursesw`)
 - Currently Playing Media (`playerctl`)
   - Metadata (Media name/title/etc.)
-  - ASCII art (extracted from audio file/URL)
+  - Album art rendered as ASCII/braille art (23 rendering modes)
   - Lyrics (if available)
   - Play/Pause
   - Next/Previous
   - Seek Interval (go forward/backward by x seconds, can set amount)
-  - Set Preferred ASCII renderer (`chafa` or `jp2a`)
+- Art rendering modes (press `a`):
+  - 23 chafa symbol sets: ascii, braille, block, dot, border, diagonal, half, quad, sextant, technical, geometric, latin, digit, alpha, stipple, solid, inverted, narrow, wide, ambiguous, legacy, extra, all
+
 - Help Menu for keybinds
 - Refresh Button (if auto-refresh/polling does not work)
 - Layout handling when resizing window
@@ -54,9 +56,12 @@ Should work with media players detectable by `playerctl` or those that implement
 
 Built on the shoulders of giants.
 
-- ncurses (TUI)
+- ncursesw (TUI, wide char support)
+- panelw (ncurses panel library)
 - [playerctl](https://github.com/altdesktop/playerctl)
 - ffmpeg (development libraries: libavformat, libavcodec, libswscale, libavutil)
+- [chafa](https://hpjansson.org/chafa/) >= 1.18.2 (image-to-ASCII/braille/sixel conversion)
+- glib (chafa dependency)
 
 ### Dev Dependencies
 
@@ -64,6 +69,7 @@ Built on the shoulders of giants.
 - GNU Make (build)
 - meson (build)
 - ninja (build)
+- cmocka (unit testing)
 - hyperfine (benchmarking)
 - perf (benchmarking)
 - strace
@@ -89,13 +95,17 @@ git clone --depth=1 https://codeberg.org/bladeacer/yams.git
 
 - Use `make run` to install binary with debug to `./build/yams`.
 
-### Binary size comparison
+### Binary size comparison (x86_64 Linux)
 
-| `make` flag | Binary size |
-| --- | --- |
-| `make install` | ~ 36 kB |
-| `make release` | ~ 44 kB |
-| `make run` | ~ 80 kB |
+| `make` flag | Binary size | Linkage |
+| --- | --- | --- |
+| `make install` | ~ 36 kB | placeholder |
+| `make release` | ~ 1.5 MB | static-linked |
+| `make release` | ~ 600 kB | dynamically linked |
+
+> Static-linked figures are based on an x86_64 build with musl-gcc and all
+> dependencies compiled statically. Dynamically linked builds are smaller since
+> libchafa, libavcodec, etc. are loaded from the system.
 
 ## LLM Usage Disclaimer
 

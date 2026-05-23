@@ -5,8 +5,8 @@
 #include "art_manager.h"
 #include "art.h"
 #include "utils.h"
-#include "metadata.h"
 #include "config.h"
+#include "metadata.h"
 
 static char last_art_path[4096] = {0};
 static char last_title_sig[2048] = {0};
@@ -66,7 +66,9 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
     bool timer_expired = (now - last_metadata_change_time >= get_art_debounce());
 
     if (force || timer_expired) {
-        char *new_buf = render_art_to_buffer(2, 1, w, h);
+        const ArtModeEntry *mode = &art_modes[get_art_mode()];
+        char *new_buf = render_art_to_buffer(2, 1, w, h,
+                                              mode->tags, mode->is_ascii);
         if (new_buf) {
             art_buffer = new_buf;
             art_buffer_len = strlen(new_buf);

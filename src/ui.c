@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <ctype.h>
 
 #include "ui.h"
 #include "layout.h"
@@ -25,7 +26,6 @@ void draw_dashboard() {
     static bool art_update_requested = false;
     static bool was_active = false;
 
-    // Snapshot metadata at entry for a consistent draw cycle
     char snap_status[64];
     char snap_title[512];
     char snap_artist[512];
@@ -53,7 +53,7 @@ void draw_dashboard() {
         }
     }
 
-    bool identity_changed = (strcmp(snap_title, last_known_title) != 0 || 
+    bool identity_changed = (strcmp(snap_title, last_known_title) != 0 ||
                          strcmp(snap_artist, last_known_artist) != 0);
 
     if (identity_changed && (snap_title[0] || snap_artist[0])) {
@@ -68,12 +68,6 @@ void draw_dashboard() {
         art_refresh_requested = false;
     }
 
-    // Exactly one of fallback or regular panes is rendered per cycle
-    // In the active path, avoid update_panels() because it refreshes
-    // main_win (including the art area) with blanks via wnoutrefresh,
-    // which overwrites the ANSI art written directly by the child process.
-    // The derwin wnoutrefresh calls in render_metadata_pane / render_lyrics_pane
-    // only copy their own row ranges, preserving the art area.
     if (!player_active) {
         draw_fallback_screen(main_win, geo.max_y - 2, geo.max_x - 2);
         update_panels();
@@ -109,4 +103,184 @@ void draw_dashboard() {
     }
 
     was_active = player_active;
+}
+
+void show_art_mode_selector(void) {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    int vis_rows = max_y - 6;
+    if (vis_rows > ART_MODE_COUNT) vis_rows = ART_MODE_COUNT;
+    if (vis_rows < 6) vis_rows = 6;
+
+    int w = 42;
+    int h = vis_rows + 5;
+    int sy = (max_y - h) / 2;
+    int sx = (max_x - w) / 2;
+
+    WINDOW *mwin = newwin(h, w, sy, sx);
+    PANEL *mpanel = new_panel(mwin);
+
+    wbkgd(mwin, COLOR_PAIR(3));
+    keypad(mwin, TRUE);
+    nodelay(mwin, FALSE);
+    curs_set(1);
+
+    int scroll = 0;
+    int current = get_art_mode();
+
+    char filter[64] = {0};
+    int filter_len = 0;
+
+    int matched[ART_MODE_COUNT];
+    int match_count = ART_MODE_COUNT;
+    for (int i = 0; i < ART_MODE_COUNT; i++) matched[i] = i;
+
+    while (true) {
+        if (filter_len == 0) {
+            match_count = ART_MODE_COUNT;
+            for (int i = 0; i < ART_MODE_COUNT; i++) matched[i] = i;
+        } else {
+            match_count = 0;
+            for (int i = 0; i < ART_MODE_COUNT; i++) {
+                const char *p = art_modes[i].name;
+                const char *f = filter;
+                while (*p && *f) {
+                    if (tolower((unsigned char)*p) == tolower((unsigned char)*f)) {
+                        f++;
+                    }
+                    p++;
+                }
+                if (*f == '\0') {
+                    matched[match_count++] = i;
+                }
+            }
+            if (current >= ART_MODE_COUNT) current = 0;
+        }
+
+        if (match_count == 1) {
+            current = matched[0];
+        }
+
+        int sel_idx = -1;
+        for (int i = 0; i < match_count; i++) {
+            if (matched[i] == current) { sel_idx = i; break; }
+        }
+        if (sel_idx < 0 && match_count > 0) {
+            current = matched[0];
+            sel_idx = 0;
+        }
+
+        if (sel_idx < scroll) scroll = sel_idx;
+        if (sel_idx >= scroll + vis_rows) scroll = sel_idx - vis_rows + 1;
+
+        werase(mwin);
+        box(mwin, 0, 0);
+        mvwprintw(mwin, 0, 2, " Art Mode ");
+
+        int line = 1;
+        for (int i = scroll; i < match_count && line <= vis_rows; i++, line++) {
+            int mid = matched[i];
+            if (mid == current) {
+                wattron(mwin, A_REVERSE);
+                mvwprintw(mwin, line, 2, "%s", art_modes[mid].name);
+                int pad = w - 4 - (int)strlen(art_modes[mid].name);
+                if (pad > 0) mvwprintw(mwin, line, 2 + (int)strlen(art_modes[mid].name), "%*s", pad, "");
+                wattroff(mwin, A_REVERSE);
+            } else {
+                mvwprintw(mwin, line, 2, "%s", art_modes[mid].name);
+            }
+        }
+
+        mvwprintw(mwin, h - 3, 2, "\x18\x19/\x11\x0E scroll  ENTER select");
+        mvwprintw(mwin, h - 2, 2, "ESC quit  Type to filter");
+
+        mvwprintw(mwin, h - 1, 2, "Filter: ");
+        if (filter_len > 0) {
+            wattron(mwin, A_BOLD);
+            mvwprintw(mwin, h - 1, 10, "%s", filter);
+            wattroff(mwin, A_BOLD);
+        }
+
+        if (match_count == 0) {
+            mvwprintw(mwin, 1, 2, "(no matches)");
+        }
+
+        update_panels();
+        doupdate();
+
+        int ch = wgetch(mwin);
+        if (ch == 27 || ch == 'q') {
+            if (filter_len > 0) {
+                filter[0] = '\0';
+                filter_len = 0;
+                continue;
+            }
+            break;
+        } else if (ch == '\n' || ch == KEY_ENTER || ch == '\r') {
+            if (match_count > 0) {
+                set_art_mode(current);
+            }
+            break;
+        } else if (ch == KEY_UP || ch == 'k' || ch == 16) {
+            if (match_count > 0) {
+                for (int i = 0; i < match_count; i++) {
+                    if (matched[i] == current) {
+                        if (i > 0) { current = matched[i - 1]; }
+                        break;
+                    }
+                }
+            }
+        } else if (ch == KEY_DOWN || ch == 'j' || ch == 14) {
+            if (match_count > 0) {
+                for (int i = 0; i < match_count; i++) {
+                    if (matched[i] == current) {
+                        if (i < match_count - 1) { current = matched[i + 1]; }
+                        break;
+                    }
+                }
+            }
+        } else if (ch == KEY_PPAGE) {
+            if (match_count > 0) {
+                for (int i = 0; i < match_count; i++) {
+                    if (matched[i] == current) {
+                        int ni = i - vis_rows;
+                        if (ni < 0) ni = 0;
+                        current = matched[ni];
+                        break;
+                    }
+                }
+            }
+        } else if (ch == KEY_NPAGE) {
+            if (match_count > 0) {
+                for (int i = 0; i < match_count; i++) {
+                    if (matched[i] == current) {
+                        int ni = i + vis_rows;
+                        if (ni >= match_count) ni = match_count - 1;
+                        current = matched[ni];
+                        break;
+                    }
+                }
+            }
+        } else if (ch == 8 || ch == 127 || ch == KEY_BACKSPACE) {
+            if (filter_len > 0) {
+                filter[--filter_len] = '\0';
+            }
+        } else if (ch >= 32 && ch <= 126) {
+            if (filter_len < (int)sizeof(filter) - 1) {
+                filter[filter_len++] = (char)ch;
+                filter[filter_len] = '\0';
+            }
+        } else if (ch == 21) {
+            filter[0] = '\0';
+            filter_len = 0;
+        }
+    }
+
+    del_panel(mpanel);
+    delwin(mwin);
+    curs_set(0);
+
+    reset_art();
+    resize_pending = true;
 }
