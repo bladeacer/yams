@@ -29,15 +29,15 @@ help: ## Show this help message
 	@echo "Build targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Binary sizes (x86_64 Linux, dynamically linked via system libs):"
-	@echo "  make run       ~ 300 kB (debug, unstripped)"
-	@echo "  make release   ~ 250 kB (release, stripped)"
-	@echo "  make install   ~ 250 kB (release, stripped, installed)"
+	@echo "Binary sizes (x86_64 Linux):"
+	@echo "  make run           ~ 300 kB (debug, dynamically linked, unstripped)"
+	@echo "  make release       ~ 1.5 MB (release, statically linked, stripped)"
+	@echo "  make release-dynamic ~ 250 kB (release, dynamically linked, stripped)"
+	@echo "  make install       ~ 1.5 MB (release, statically linked, installed)"
+	@echo "  make install-dynamic ~ 250 kB (release, dynamically linked, installed)"
 	@echo ""
-	@echo "For static builds, pass -Db_staticpic=true -Dc_args='-static' to meson:"
-	@echo "  meson setup build --buildtype=release -Dtests=false -Dlogging=false -Dc_args='-static'"
-	@echo "  ninja -C build"
-	@echo "  Static binary ~ 1.5 MB (x86_64)"
+	@echo "Static builds require static library versions of all dependencies"
+	@echo "(libchafa, ffmpeg, glib, ncursesw, panelw, cmocka)."
 
 setup: ## Initialize meson build directory (Debug mode)
 	@meson setup build --buildtype=debugoptimized --optimization=3
@@ -69,7 +69,21 @@ test: ## Build and run unit tests
 		fi; \
 	done
 
-release: clean ## Build a stripped release binary without debug/tests
+release: clean ## Build a stripped static release binary without debug/tests
+	@meson setup build \
+		--buildtype=release \
+		--optimization=3 \
+		-Db_lto=true \
+		-Dstrip=true \
+		-Dtests=false \
+		-Dlogging=false \
+		-Dc_args="$(FULL_CFLAGS) -static"
+	@ninja -C build
+	@echo ""
+	@echo "\033[32m--- Binary Info ---\033[0m"
+	@ls -lh build/yams
+
+release-dynamic: clean ## Build a stripped dynamically-linked release binary
 	@meson setup build \
 		--buildtype=release \
 		--optimization=3 \
@@ -83,8 +97,23 @@ release: clean ## Build a stripped release binary without debug/tests
 	@echo "\033[32m--- Binary Info ---\033[0m"
 	@ls -lh build/yams
 
-install: ## Build release binary (no debug/tests) and install to system
-	@echo "$(CYAN)Configuring optimized release build...$(RESET)"
+install: ## Build static release binary and install to system
+	@echo "$(CYAN)Configuring static release build...$(RESET)"
+	@rm -rf build
+	@meson setup build \
+		--buildtype=release \
+		--optimization=3 \
+		-Db_lto=true \
+		-Dstrip=true \
+		-Dtests=false \
+		-Dlogging=false \
+		-Dc_args="$(FULL_CFLAGS) -static"
+	@ninja -C build
+	@echo "$(GREEN)Installing to system...$(RESET)"
+	@sudo ninja -C build install
+
+install-dynamic: ## Build dynamically-linked release binary and install to system
+	@echo "$(CYAN)Configuring dynamic release build...$(RESET)"
 	@rm -rf build
 	@meson setup build \
 		--buildtype=release \

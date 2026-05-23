@@ -70,7 +70,7 @@ Built on the shoulders of giants.
 - GNU Make (build)
 - meson (build)
 - ninja (build)
-- cmocka (unit testing)
+- cmocka (unit testing; meson falls back to a bundled subproject if not found)
 - hyperfine (benchmarking)
 - perf (benchmarking)
 - strace
@@ -90,35 +90,78 @@ Clone the repository, ensure you have listed dependencies on your system.
 git clone --depth=1 https://codeberg.org/bladeacer/yams.git
 ```
 
-- Use `make install` to install binary to `/usr/local/bin`.
+- Use `make install` to build a static binary and install to `/usr/local/bin`.
+  Requires static libraries of all dependencies (see below).
 
-- Use `make release` to install stripped binary to `./build/yams`.
+- Use `make install-dynamic` to build a dynamically linked binary and install.
 
-- Use `make run` to install binary with debug to `./build/yams`.
+- Use `make release` to build a stripped static binary in `./build/yams`.
 
-### Binary size (x86_64 Linux, dynamically linked)
+- Use `make release-dynamic` to build a stripped dynamically linked binary.
 
-| Command | Binary size | Notes |
-| --- | --- | --- |
-| `make run` | ~ 300 kB | Debug build, unstripped |
-| `make release` | ~ 250 kB | Release build, stripped, in `./build/yams` |
-| `make install` | ~ 250 kB | Release build, stripped, installed to `/usr/local/bin` |
+- Use `make run` to build a debug binary in `./build/yams`.
 
-**Static build:** For a fully static binary (no runtime library dependencies), configure meson with `-Dc_args='-static'`:
+### Installing cmocka (optional, for running tests)
+
+cmocka is used for unit tests. If not installed, meson will automatically
+download and build it as a subproject — no manual setup required.
+
+To install cmocka system-wide:
+
+**Arch Linux:**
 ```bash
-meson setup build --buildtype=release -Dtests=false -Dlogging=false -Dc_args='-static'
-ninja -C build
+sudo pacman -S cmocka
 ```
-Static binary size is ~ 1.5 MB on x86_64 Linux. This includes libchafa, ffmpeg,
-glib, ncursesw, and all other dependencies linked directly into the binary.
-> Note: Static linking with ffmpeg's libavcodec requires the static versions of
-> the ffmpeg libraries to be installed on your system.
+
+**Debian/Ubuntu:**
+```bash
+sudo apt install libcmocka-dev
+```
+
+**Fedora:**
+```bash
+sudo dnf install cmocka-devel
+```
+
+**macOS (Homebrew):**
+```bash
+brew install cmocka
+```
+
+**From source:**
+```bash
+git clone https://git.cryptomilk.org/projects/cmocka.git
+cd cmocka
+mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release
+make
+sudo make install
+```
+
+### Binary size (x86_64 Linux)
+
+| Command | Binary size | Linkage | Notes |
+| --- | --- | --- | --- |
+| `make run` | ~ 300 kB | dynamic | Debug build, unstripped |
+| `make release` | ~ 1.5 MB | static | Release, stripped, in `./build/yams` |
+| `make release-dynamic` | ~ 250 kB | dynamic | Release, stripped |
+| `make install` | ~ 1.5 MB | static | Release, stripped, installed |
+| `make install-dynamic` | ~ 250 kB | dynamic | Release, stripped, installed |
+
+Static builds (`make release`, `make install`) link all dependencies (libchafa,
+ffmpeg, glib, ncursesw, panelw) directly into the binary. Static library
+versions (`.a` files) must be installed on your system:
+
+- Debian/Ubuntu: `apt install libchafa-dev libavformat-dev libavcodec-dev libswscale-dev libavutil-dev libncurses-dev libglib2.0-dev` (some may need `-static` variants)
+- Arch: `pacman -S chafa ffmpeg ncurses glib2` (static libs included in dev packages)
+- Fedora: `dnf install chafa-devel ffmpeg-devel ncurses-devel glib2-devel`
 
 ## LLM Usage Disclaimer
 
 I used LLMs to help with development.
 
-This is my first project using `ncurses`, C and UNIX tools like `strace`, `stat`.
+This is my first project using `ncurses`, C and UNIX tools like `strace`, `stat`,
+as well as the others used in the project.
 
 ## License
 

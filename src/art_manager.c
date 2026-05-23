@@ -48,23 +48,20 @@ void replay_art_buffer(void) {
 }
 
 static char *make_fallback(int x, int y, int w, int h) {
-    (void)w;
-    (void)h;
-    char *buf = malloc(256);
+    char *buf = malloc(4096);
     if (!buf) return NULL;
-    int n = snprintf(buf, 256,
-        "\x1b[%d;%dH No album art [mode %s]",
-        y + h / 2, x + 2,
-        art_modes[get_art_mode()].name);
-    if (n < 0 || n >= 256) { free(buf); return NULL; }
+    int pos = 0;
     char clear[128];
     int cw = w < 126 ? w : 126;
     memset(clear, ' ', cw);
     clear[cw] = '\0';
-    int pos = strlen(buf);
-    for (int r = 0; r < h; r++)
-        pos += snprintf(buf + pos, (size_t)(256 - pos),
+    for (int r = 0; r < h && pos < 4090; r++)
+        pos += snprintf(buf + pos, (size_t)(4096 - pos),
                         "\x1b[%d;%dH%s", y + 1 + r, x + 1, clear);
+    snprintf(buf + pos, (size_t)(4096 - pos),
+             "\x1b[%d;%dH No album art [%s]",
+             y + h / 2, x + 2,
+             art_modes[get_art_mode()].name);
     return buf;
 }
 

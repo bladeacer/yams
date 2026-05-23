@@ -235,12 +235,28 @@ static void render_pixel_to_gs(uint8_t *pixels, int img_w, int img_h,
                                 int cell_w, int cell_h,
                                 ChafaPixelMode pixel_mode, GString *out) {
     ChafaCanvasConfig *config = chafa_canvas_config_new();
+    chafa_canvas_config_set_cell_geometry(config, 10, 20);
     chafa_canvas_config_set_geometry(config, cell_w, cell_h);
     chafa_canvas_config_set_preprocessing_enabled(config, FALSE);
     chafa_canvas_config_set_bg_color(config, 0x000000);
     chafa_canvas_config_set_pixel_mode(config, pixel_mode);
 
+    ChafaFrame *frame = chafa_frame_new(pixels, CHAFA_PIXEL_RGBA8_UNASSOCIATED,
+                                         img_w, img_h, img_w * 4);
+    ChafaImage *image = chafa_image_new();
+    chafa_image_set_frame(image, frame);
+    chafa_frame_unref(frame);
+
+    ChafaPlacement *placement = chafa_placement_new(image, 0);
+    chafa_image_unref(image);
+    chafa_placement_set_tuck(placement, CHAFA_TUCK_FIT);
+    chafa_placement_set_halign(placement, CHAFA_ALIGN_CENTER);
+    chafa_placement_set_valign(placement, CHAFA_ALIGN_CENTER);
+
     ChafaCanvas *canvas = chafa_canvas_new(config);
+    chafa_canvas_set_placement(canvas, placement);
+    chafa_placement_unref(placement);
+
     chafa_canvas_draw_all_pixels(canvas, CHAFA_PIXEL_RGBA8_UNASSOCIATED,
                                  pixels, img_w, img_h, img_w * 4);
 
@@ -298,35 +314,6 @@ char *render_art_to_buffer(int x, int y, int w, int h,
             render_chafa_to_gs(pixels, img_w, img_h, x, y, w, h, tags, out);
         }
     } else {
-        int px_w = w * 10;
-        int px_h = h * 24;
-        if (px_w < 1) px_w = 1;
-        if (px_h < 1) px_h = 1;
-
-        float src_aspect = (float)img_w / (float)img_h;
-        float dst_aspect = (float)px_w / (float)px_h;
-
-        int rw, rh;
-        if (src_aspect > dst_aspect) {
-            rw = px_w;
-            rh = (int)(px_w / src_aspect);
-            if (rh < 1) rh = 1;
-        } else {
-            rh = px_h;
-            rw = (int)(px_h * src_aspect);
-            if (rw < 1) rw = 1;
-        }
-
-        uint8_t *resized = malloc((size_t)rw * rh * 4);
-        if (resized) {
-            stbir_resize_uint8(pixels, img_w, img_h, 0,
-                               resized, rw, rh, 0, 4);
-            free(pixels);
-            pixels = resized;
-            img_w = rw;
-            img_h = rh;
-        }
-
         char clear[512];
         int cw = w < 510 ? w : 510;
         memset(clear, ' ', cw);
