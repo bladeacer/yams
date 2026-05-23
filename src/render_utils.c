@@ -4,6 +4,7 @@
 #include "debug.h"
 #include "metadata.h"
 #include "layout.h"
+#include "art.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -63,7 +64,24 @@ void draw_help_text(WINDOW *win, int y, int x) {
     wattron(win, A_BOLD);
     draw_item(win, "q", "Quit", &cur_y, &cur_x, x, max_h, max_w);
     draw_item(win, "r", "Retry Art", &cur_y, &cur_x, x, max_h, max_w);
-    draw_item(win, "c", "Cache", &cur_y, &cur_x, x, max_h, max_w);
+
+    {
+        static long last_cr = 0;
+        static char clbl[64] = "";
+        long now = get_ms();
+        if (now - last_cr > 3000 || !clbl[0]) {
+            char *info = get_cache_info();
+            if (info) {
+                const char *v = strchr(info, ':');
+                v = v ? v + 2 : info;
+                snprintf(clbl, sizeof(clbl), "%s", v);
+                free(info);
+            }
+            last_cr = now;
+        }
+        draw_item(win, "c", clbl[0] ? clbl : "Cache", &cur_y, &cur_x, x, max_h, max_w);
+    }
+
     draw_item(win, "?", "Help", &cur_y, &cur_x, x, max_h, max_w);
 
     cur_y++;

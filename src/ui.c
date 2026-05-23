@@ -17,6 +17,13 @@
 
 bool resize_pending = false;
 
+static char status_msg[256] = {0};
+
+void show_status_msg(const char *msg) {
+    strncpy(status_msg, msg, sizeof(status_msg) - 1);
+    status_msg[sizeof(status_msg) - 1] = '\0';
+}
+
 void draw_dashboard() {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -48,6 +55,7 @@ void draw_dashboard() {
 
     if (player_active && !was_active) {
         clear_art_area();
+        werase(main_win);
         if (!art_update_requested) {
             reset_art();
         }
@@ -74,24 +82,35 @@ void draw_dashboard() {
         int art_top = 2;
         for (int r = 0; r < geo.art_h && art_top + r <= LINES; r++)
             wredrawln(curscr, art_top - 1 + r, 1);
-        doupdate();
-        resize_pending = false;
     } else {
         if (meta_sub) render_metadata_pane(meta_sub);
         if (lyr_sub)  render_lyrics_pane(lyr_sub);
-        doupdate();
-        replay_art_buffer();
     }
+
+    if (status_msg[0]) {
+        int my, mx;
+        getmaxyx(stdscr, my, mx);
+        mvwprintw(stdscr, my - 1, 1, "%-*s", mx - 2, status_msg);
+        wnoutrefresh(stdscr);
+        status_msg[0] = '\0';
+    }
+
+    doupdate();
+
+    if (player_active)
+        replay_art_buffer();
+
+    if (!player_active)
+        resize_pending = false;
 
     if (player_active) {
         long now = get_ms();
         long elapsed = now - get_last_metadata_change_time();
 
         bool song_changed = (art_update_requested && elapsed >= get_art_debounce());
-
         bool must_resize = (art_update_requested && elapsed < get_art_debounce());
 
-        if (song_changed || must_resize) {
+        if (song_changed || must_resize || is_retry_pending()) {
             const char *art_src = (strlen(snap_art_url) > 5) ? snap_art_url : snap_path;
             char title_sig[2048];
             snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(snap_title), safe_str(snap_artist));

@@ -225,9 +225,13 @@ static void handle_keypress(int ch, long now) {
             show_art_mode_selector();
             break;
         case 'c': {
+            char *info = get_cache_info();
             char *msg = clear_art_cache();
-            DBG("Cache: %s", msg);
+            char buf[512];
+            snprintf(buf, sizeof(buf), "%s  |  %s", info, msg);
+            free(info);
             free(msg);
+            show_status_msg(buf);
             resize_pending = true;
             break;
         }
@@ -308,7 +312,7 @@ void show_help_overlay(long now) {
     }
 
     HELP_L("q",     "Quit Application");
-    HELP_L("r",     "Retry Art");
+    HELP_L("r",     "Refresh");
     HELP_L("c",     "Clear Art Cache");
     HELP_L("SPC",   "Play / Pause");
     HELP_L("h/<-",  "Previous Track");

@@ -17,5 +17,6 @@ long get_last_metadata_change_time();
 // These remain in ui.c
 void draw_dashboard();
 void show_art_mode_selector();
+void show_status_msg(const char *msg);
 
 #endif

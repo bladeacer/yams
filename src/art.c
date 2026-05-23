@@ -336,6 +336,47 @@ static bool download_to_cache(const char *url, const char *cache_path) {
     return true;
 }
 
+static char *format_size(double bytes) {
+    char *s = NULL;
+    if (bytes < 1024.0)
+        asprintf(&s, "%.0f B", bytes);
+    else if (bytes < 1024.0 * 1024.0)
+        asprintf(&s, "%.1f KB", bytes / 1024.0);
+    else
+        asprintf(&s, "%.1f MB", bytes / (1024.0 * 1024.0));
+    return s;
+}
+
+char *get_cache_info(void) {
+    char *cache_dir = get_cache_dir();
+    char *result = NULL;
+    DIR *d = opendir(cache_dir);
+    if (d) {
+        struct dirent *entry;
+        int count = 0;
+        double total = 0.0;
+        while ((entry = readdir(d)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+            char *path = NULL;
+            asprintf(&path, "%s/%s", cache_dir, entry->d_name);
+            struct stat st;
+            if (stat(path, &st) == 0) {
+                total += (double)st.st_size;
+                count++;
+            }
+            free(path);
+        }
+        closedir(d);
+        char *size_str = format_size(total);
+        asprintf(&result, "Art cache: %s (%d file%s)", size_str, count, count == 1 ? "" : "s");
+        free(size_str);
+    } else {
+        asprintf(&result, "Art cache: empty");
+    }
+    free(cache_dir);
+    return result;
+}
+
 char *clear_art_cache(void) {
     char *cache_dir = get_cache_dir();
     char *result = NULL;
@@ -343,15 +384,20 @@ char *clear_art_cache(void) {
     if (d) {
         struct dirent *entry;
         int removed = 0;
+        double freed = 0.0;
         while ((entry = readdir(d)) != NULL) {
             if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
             char *path = NULL;
             asprintf(&path, "%s/%s", cache_dir, entry->d_name);
+            struct stat st;
+            if (stat(path, &st) == 0) freed += (double)st.st_size;
             if (unlink(path) == 0) removed++;
             free(path);
         }
         closedir(d);
-        asprintf(&result, "Cache cleared: %d file(s) removed", removed);
+        char *size_str = format_size(freed);
+        asprintf(&result, "Cleared %s (%d file%s)", size_str, removed, removed == 1 ? "" : "s");
+        free(size_str);
     } else {
         asprintf(&result, "Cache directory not found");
     }

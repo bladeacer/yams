@@ -41,6 +41,10 @@ bool is_art_active(void) {
     return (art_buffer != NULL);
 }
 
+bool is_retry_pending(void) {
+    return retry_src[0] != '\0';
+}
+
 void reset_art() {
     free(art_buffer);
     art_buffer = NULL;

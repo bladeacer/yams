@@ -9,5 +9,6 @@ void update_and_render_art(const char* source, const char* title, int w, int h, 
 void replay_art_buffer(void);
 long get_last_render_time(void);
 bool is_art_active(void);
+bool is_retry_pending(void);
 
 #endif
