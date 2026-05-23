@@ -62,9 +62,12 @@ void draw_help_text(WINDOW *win, int y, int x) {
 
     wattron(win, A_BOLD);
     draw_item(win, "q", "Quit", &cur_y, &cur_x, x, max_h, max_w);
-    draw_item(win, "r", "Refresh", &cur_y, &cur_x, x, max_h, max_w);
-    draw_item(win, "c", "Clear Cache", &cur_y, &cur_x, x, max_h, max_w);
+    draw_item(win, "r", "Retry Art", &cur_y, &cur_x, x, max_h, max_w);
+    draw_item(win, "c", "Cache", &cur_y, &cur_x, x, max_h, max_w);
     draw_item(win, "?", "Help", &cur_y, &cur_x, x, max_h, max_w);
+
+    cur_y++;
+    cur_x = x;
 
     char seek_str[32];
     snprintf(seek_str, sizeof(seek_str), "Seek: %ds", get_seek_interval());

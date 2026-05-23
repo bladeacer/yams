@@ -121,7 +121,23 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
             retry_src[0] = '\0';
             retry_attempt = 0;
         } else {
+            bool had_retry = (retry_src[0] != '\0');
             new_buf = make_fallback(2, 1, w, h);
+            if (new_buf && had_retry) {
+                free(new_buf);
+                new_buf = malloc(4096);
+                if (new_buf) {
+                    int pos = 0, cw = w < 126 ? w : 126;
+                    char clear[128];
+                    memset(clear, ' ', cw); clear[cw] = '\0';
+                    for (int r = 0; r < h && pos < 4000; r++)
+                        pos += snprintf(new_buf + pos, 4096 - pos,
+                                       "\x1b[%d;%dH%s", 3 + r, 3, clear);
+                    snprintf(new_buf + pos, 4096 - pos,
+                             "\x1b[%d;%dH Retrying art... (attempt %d)",
+                             2 + h / 2, 4, retry_attempt + 1);
+                }
+            }
             if (new_buf) {
                 art_buffer = new_buf;
                 art_buffer_len = strlen(new_buf);

@@ -71,6 +71,9 @@ void draw_dashboard() {
     if (!player_active) {
         draw_fallback_screen(main_win, geo.max_y - 2, geo.max_x - 2);
         update_panels();
+        int art_top = 2;
+        for (int r = 0; r < geo.art_h && art_top + r <= LINES; r++)
+            wredrawln(curscr, art_top - 1 + r, 1);
         doupdate();
         resize_pending = false;
     } else {

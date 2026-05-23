@@ -308,7 +308,7 @@ void show_help_overlay(long now) {
     }
 
     HELP_L("q",     "Quit Application");
-    HELP_L("r",     "Force Refresh UI");
+    HELP_L("r",     "Retry Art");
     HELP_L("c",     "Clear Art Cache");
     HELP_L("SPC",   "Play / Pause");
     HELP_L("h/<-",  "Previous Track");
