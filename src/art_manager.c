@@ -52,7 +52,7 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
     
     if (render_pending && (force || timer_expired)) {
         if (art_pid == -1) {
-            art_pid = render_art(2, 0, w, h); 
+            art_pid = render_art(2, 1, w, h); 
             render_pending = false; 
         }
     }

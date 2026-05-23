@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <wchar.h>
 
 const char* safe_str(const char* s) {
     return (s && strlen(s) > 0) ? s : "Unknown";
@@ -78,11 +79,29 @@ void draw_metadata_line(WINDOW *win, int *y, const char *label, const char *valu
     if (bold) wattron(win, A_BOLD);
 
     mvwaddstr(win, *y, 0, label);
-    int val_x = strlen(label);
+    int val_x = getcurx(win);
     int max_w = getmaxx(win) - val_x;
     if (max_w < 0) max_w = 0;
 
-    mvwaddnstr(win, *y, val_x, value, max_w);
+    wchar_t wbuf[2048];
+    size_t n = mbstowcs(wbuf, value, 2048);
+    if (n != (size_t)-1 && n > 0) {
+        int value_w = wcswidth(wbuf, n);
+        if (value_w > max_w) {
+            int i = 0, col = 0;
+            while (i < (int)n && col + wcwidth(wbuf[i]) <= max_w) {
+                col += wcwidth(wbuf[i]);
+                i++;
+            }
+            wbuf[i] = L'\0';
+            mvwaddwstr(win, *y, val_x, wbuf);
+        } else {
+            mvwaddwstr(win, *y, val_x, wbuf);
+        }
+    } else {
+        mvwaddnstr(win, *y, val_x, value, max_w);
+    }
+
     (*y)++;
 
     if (bold) wattroff(win, A_BOLD);
@@ -91,7 +110,7 @@ void draw_metadata_line(WINDOW *win, int *y, const char *label, const char *valu
 
 void clear_art_area(void) {
     if (geo.art_w <= 0 || geo.art_h <= 0) return;
-    int art_x = 2, art_y = 0;
+    int art_x = 2, art_y = 1;
     int abs_y = 1 + art_y;
     int abs_x = 1 + art_x;
     char *clear = malloc((size_t)geo.art_w + 1);

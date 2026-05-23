@@ -44,21 +44,30 @@ run: ## Run compiled binary (Clean & Debug)
 clean: ## Remove build directory
 	@rm -rf build
 
-release: clean ## Build a stripped release binary and check size
+test: ## Build and run unit tests
+	@echo "$(CYAN)Configuring debug build with tests...$(RESET)"
+	@if [ ! -d "build" ]; then \
+		meson setup build --buildtype=debug -Dlogging=true -Dtests=true; \
+	fi
+	@ninja -C build
+	@echo "$(GREEN)Running unit tests...$(RESET)"
+	@meson test -C build
+
+release: clean ## Build a stripped release binary without debug/tests
 	@meson setup build \
 		--buildtype=release \
 		--optimization=3 \
 		-Db_lto=true \
 		-Dstrip=true \
+		-Dtests=false \
+		-Dlogging=false \
 		-Dc_args="$(FULL_CFLAGS)"
 	@ninja -C build
 	@echo ""
 	@echo "\033[32m--- Binary Info ---\033[0m"
 	@ls -lh build/yams
-	@echo -n "Total disk usage: "
-	@du -h build/yams
 
-install: ## Build release binary and install to system
+install: ## Build release binary (no debug/tests) and install to system
 	@echo "$(CYAN)Configuring optimized release build...$(RESET)"
 	@rm -rf build
 	@meson setup build \
@@ -66,17 +75,12 @@ install: ## Build release binary and install to system
 		--optimization=3 \
 		-Db_lto=true \
 		-Dstrip=true \
+		-Dtests=false \
+		-Dlogging=false \
 		-Dc_args="$(FULL_CFLAGS)"
-	@ninja -C build
 	@ninja -C build
 	@echo "$(GREEN)Installing to system...$(RESET)"
 	@sudo ninja -C build install
-	@# Verify that the installed binary doesn't have debug strings
-	@if strings $$(command -v yams) | grep -q "yams.log"; then \
-		echo "Warning: Installed binary still contains debug references!"; \
-	else \
-		echo "Success: Optimized binary installed."; \
-	fi
 
 uninstall: ## Remove yams from the system
 	@sudo rm -f /usr/local/bin/yams

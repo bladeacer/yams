@@ -54,8 +54,10 @@ executable('yams',
   install : true
 )
 
-cmocka_dep = dependency('cmocka', required: false)
-if not cmocka_dep.found()
-  cmocka_dep = subproject('cmocka').get_variable('cmocka_dep')
+if get_option('tests')
+  cmocka_dep = dependency('cmocka', required: false)
+  if not cmocka_dep.found()
+    cmocka_dep = subproject('cmocka').get_variable('cmocka_dep')
+  endif
+  subdir('tests')
 endif
-subdir('tests')

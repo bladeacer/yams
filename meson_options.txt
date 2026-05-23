@@ -1,2 +1,4 @@
 option('logging', type: 'boolean', value: true,
        description: 'Enable debug logging')
+option('tests', type: 'boolean', value: true,
+       description: 'Build unit tests')
