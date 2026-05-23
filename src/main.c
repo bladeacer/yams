@@ -437,9 +437,19 @@ int main() {
 
     resize_pending = true;
 
+    bool debounce_triggered = false;
+
     while (1) {
         long now = get_ms();
         long elapsed_since_change = now - get_last_metadata_change_time();
+
+        if (elapsed_since_change >= get_art_debounce() && !debounce_triggered) {
+            resize_pending = true;
+            debounce_triggered = true;
+        }
+        if (elapsed_since_change < 50)
+            debounce_triggered = false;
+
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(STDIN_FILENO, &fds);
@@ -454,12 +464,12 @@ int main() {
 
         struct timeval tv;
 
-        if (elapsed_since_change < get_art_debounce()) {
+        if (resize_pending) {
+            tv.tv_sec = 0;
+            tv.tv_usec = 10000;
+        } else if (elapsed_since_change < get_art_debounce()) {
             tv.tv_sec = 0;
             tv.tv_usec = 50000;
-        } else if (resize_pending) {
-            tv.tv_sec = 0;
-            tv.tv_usec = 10000; 
         } else {
             tv.tv_sec = 1;
             tv.tv_usec = 0;
@@ -482,27 +492,19 @@ int main() {
             handle_player_data();
         }
 
-        bool needs_art_check = (elapsed_since_change >= get_art_debounce() && elapsed_since_change < get_art_debounce() + 100);
-
-        if (resize_pending || needs_art_check) {
-            // Check terminal size
+        if (resize_pending) {
             struct winsize size;
             if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
                 if (size.ws_row != LINES || size.ws_col != COLS) {
                     resizeterm(size.ws_row, size.ws_col);
                     erase(); 
-                    resize_pending = true; // Ensure we re-layout
+                    resize_pending = true;
                 }
             }
 
-            // Always draw if pending or if we just hit the art debounce timer
             draw_dashboard();
             last_draw_time = now;
-
-            // Only clear the pending flag if we aren't still waiting for the art timer
-            if (elapsed_since_change > get_art_debounce()) {
-                resize_pending = false;
-            }
+            resize_pending = false;
         }
 
         usleep(10000);

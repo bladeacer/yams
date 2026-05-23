@@ -39,9 +39,10 @@ static int setup(void **state) {
 static int teardown(void **state) {
     char *dir = (char *)*state;
     if (!dir) return 0;
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
+    char *cmd;
+    asprintf(&cmd, "rm -rf '%s'", dir);
     system(cmd);
+    free(cmd);
     free(dir);
     return 0;
 }
@@ -64,18 +65,19 @@ static void test_cache_clear_empty_returns_msg(void **state) {
 
 static void test_cache_reports_correct_size(void **state) {
     char *dir = (char *)*state;
-    char cache_dir[1024];
-    snprintf(cache_dir, sizeof(cache_dir), "%s/yams/art", dir);
+    char *cache_dir;
+    asprintf(&cache_dir, "%s/yams/art", dir);
     mkdir_p(cache_dir);
 
-    char path[1024];
-    snprintf(path, sizeof(path), "%s/test_file.bin", cache_dir);
+    char *path;
+    asprintf(&path, "%s/test_file.bin", cache_dir);
     FILE *f = fopen(path, "wb");
     assert_non_null(f);
     uint8_t data[4096] = {42};
     size_t written = fwrite(data, 1, sizeof(data), f);
     assert_int_equal(written, sizeof(data));
     fclose(f);
+    free(path);
 
     art_cache_bump();
 
@@ -83,25 +85,30 @@ static void test_cache_reports_correct_size(void **state) {
     assert_non_null(info);
     assert_string_equal(info, "Art cache: 4.0 KB (1 file)");
     free(info);
+    free(cache_dir);
 }
 
 static void test_cache_clear_removes_files(void **state) {
     char *dir = (char *)*state;
-    char cache_dir[1024];
-    snprintf(cache_dir, sizeof(cache_dir), "%s/yams/art", dir);
+    char *cache_dir;
+    asprintf(&cache_dir, "%s/yams/art", dir);
     mkdir_p(cache_dir);
 
-    char path[1024];
-    snprintf(path, sizeof(path), "%s/a.bin", cache_dir);
+    char *path;
+    asprintf(&path, "%s/a.bin", cache_dir);
     FILE *f = fopen(path, "wb");
     assert_non_null(f);
+    free(path);
+
     uint8_t data[1024] = {1};
     fwrite(data, 1, sizeof(data), f);
     fclose(f);
 
-    snprintf(path, sizeof(path), "%s/b.bin", cache_dir);
+    asprintf(&path, "%s/b.bin", cache_dir);
     f = fopen(path, "wb");
     assert_non_null(f);
+    free(path);
+
     fwrite(data, 1, sizeof(data), f);
     fclose(f);
 
@@ -121,12 +128,14 @@ static void test_cache_clear_removes_files(void **state) {
     assert_non_null(info);
     assert_string_equal(info, "Art cache: 0 B (0 files)");
     free(info);
+
+    free(cache_dir);
 }
 
 static void test_cache_version_returns_cached(void **state) {
     char *dir = (char *)*state;
-    char cache_dir[1024];
-    snprintf(cache_dir, sizeof(cache_dir), "%s/yams/art", dir);
+    char *cache_dir;
+    asprintf(&cache_dir, "%s/yams/art", dir);
     mkdir_p(cache_dir);
 
     char *info1 = get_cache_info();
@@ -134,10 +143,12 @@ static void test_cache_version_returns_cached(void **state) {
     assert_string_equal(info1, "Art cache: 0 B (0 files)");
     free(info1);
 
-    char path[1024];
-    snprintf(path, sizeof(path), "%s/x.bin", cache_dir);
+    char *path;
+    asprintf(&path, "%s/x.bin", cache_dir);
     FILE *f = fopen(path, "wb");
     assert_non_null(f);
+    free(path);
+
     uint8_t data[512] = {0};
     fwrite(data, 1, sizeof(data), f);
     fclose(f);
@@ -148,6 +159,8 @@ static void test_cache_version_returns_cached(void **state) {
     assert_non_null(info2);
     assert_string_equal(info2, "Art cache: 512 B (1 file)");
     free(info2);
+
+    free(cache_dir);
 }
 
 int main(void) {

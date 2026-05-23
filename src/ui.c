@@ -117,14 +117,13 @@ void draw_dashboard() {
         long elapsed = now - get_last_metadata_change_time();
 
         bool song_changed = (art_update_requested && elapsed >= get_art_debounce());
-        bool must_resize = (art_update_requested && elapsed < get_art_debounce());
 
-        if (song_changed || must_resize || is_retry_pending()) {
+        if (song_changed || is_retry_pending()) {
             const char *art_src = (strlen(snap_art_url) > 5) ? snap_art_url : snap_path;
             char title_sig[2048];
             snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(snap_title), safe_str(snap_artist));
 
-            update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, must_resize);
+            update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, false);
 
             replay_art_buffer();
 
