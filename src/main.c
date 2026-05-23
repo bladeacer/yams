@@ -384,15 +384,10 @@ static void handle_player_data() {
 
     while ((n = read(player_fd, chunk, sizeof(chunk))) > 0) {
         if (buf_idx + n >= BUFFER_SIZE - 1) {
-            char *last = NULL;
-            char *scan = poll_buffer;
-            while ((scan = strstr(scan, "[[END]]"))) {
-                last = scan;
-                scan += 7;
-            }
-            if (last) {
-                size_t trailing = buf_idx - (last - poll_buffer + 7);
-                memmove(poll_buffer, last + 7, trailing);
+            char *first = strstr(poll_buffer, "[[END]]");
+            if (first) {
+                size_t trailing = buf_idx - (first - poll_buffer + 7);
+                memmove(poll_buffer, first + 7, trailing);
                 buf_idx = trailing;
             } else {
                 buf_idx = 0;
@@ -448,10 +443,10 @@ int main() {
     init_ui();
     nodelay(stdscr, TRUE);
 
-    const char *fmt = "PLAYER|{{playerName}}#STATUS|{{status}}#TITLE|{{xesam:title}}#"
-        "ARTIST|{{xesam:artist}}#ALBUM|{{xesam:album}}#PATH|{{xesam:url}}#"
-        "LENGTH|{{mpris:length}}#GENRE|{{xesam:genre}}#COMPOSER|{{xesam:composer}}#"
-        "ART|{{mpris:artUrl}}#LYRICS|{{xesam:asText}}#[[END]]";
+    const char *fmt = "PLAYER|{{playerName}}	STATUS|{{status}}	TITLE|{{xesam:title}}	"
+        "ARTIST|{{xesam:artist}}	ALBUM|{{xesam:album}}	PATH|{{xesam:url}}	"
+        "LENGTH|{{mpris:length}}	GENRE|{{xesam:genre}}	COMPOSER|{{xesam:composer}}	"
+        "ART|{{mpris:artUrl}}	LYRICS|{{xesam:asText}}	[[END]]";
 
     char *meta_args[] = {"playerctl", "metadata", "--follow", "--format", (char*)fmt, NULL};
     metadata_pid = spawn_playerctl(meta_args, &player_fd);

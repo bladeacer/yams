@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <setjmp.h>
 #include <string.h>
+#include <stdio.h>
 #include <cmocka.h>
 #include "metadata.h"
 
@@ -33,7 +34,7 @@ static void test_parse_block_empty(void **state) {
 static void test_parse_block_title_artist(void **state) {
     (void)state;
     clear_metadata();
-    char input[] = "TITLE|Bohemian Rhapsody#ARTIST|Queen#STATUS|Playing";
+    char input[] = "TITLE|Bohemian Rhapsody	ARTIST|Queen	STATUS|Playing";
     assert_true(parse_block(input));
     assert_string_equal(m.title, "Bohemian Rhapsody");
     assert_string_equal(m.artist, "Queen");
@@ -43,7 +44,7 @@ static void test_parse_block_title_artist(void **state) {
 static void test_parse_block_album_genre_composer(void **state) {
     (void)state;
     clear_metadata();
-    char input[] = "ALBUM|A Night at the Opera#GENRE|Rock#COMPOSER|Freddie Mercury";
+    char input[] = "ALBUM|A Night at the Opera	GENRE|Rock	COMPOSER|Freddie Mercury";
     assert_false(parse_block(input));
     assert_string_equal(m.album, "A Night at the Opera");
     assert_string_equal(m.genre, "Rock");
@@ -53,7 +54,7 @@ static void test_parse_block_album_genre_composer(void **state) {
 static void test_parse_block_length(void **state) {
     (void)state;
     clear_metadata();
-    char input[] = "TITLE|Test#LENGTH|354000000";
+    char input[] = "TITLE|Test	LENGTH|354000000";
     assert_true(parse_block(input));
     assert_string_equal(m.length_str, "5:54");
 }
@@ -61,7 +62,7 @@ static void test_parse_block_length(void **state) {
 static void test_parse_block_length_zero(void **state) {
     (void)state;
     clear_metadata();
-    char input[] = "TITLE|Test#LENGTH|0";
+    char input[] = "TITLE|Test	LENGTH|0";
     assert_true(parse_block(input));
     assert_string_equal(m.length_str, "0:00");
 }
@@ -69,7 +70,7 @@ static void test_parse_block_length_zero(void **state) {
 static void test_parse_block_player_path(void **state) {
     (void)state;
     clear_metadata();
-    char input[] = "PLAYER|spotify#PATH|/home/user/music/song.flac";
+    char input[] = "PLAYER|spotify	PATH|/home/user/music/song.flac";
     assert_false(parse_block(input));
     assert_string_equal(m.player, "spotify");
     assert_string_equal(m.file_path, "/home/user/music/song.flac");
@@ -94,7 +95,7 @@ static void test_parse_block_art_url_skip_data(void **state) {
 static void test_parse_block_lyrics_on_new_song(void **state) {
     (void)state;
     clear_metadata();
-    char input[] = "TITLE|New Song#ARTIST|Me#LYRICS|line1\nline2\nline3\n";
+    char input[] = "TITLE|New Song	ARTIST|Me	LYRICS|line1\nline2\nline3\n";
     assert_true(parse_block(input));
     assert_int_equal(m.lyric_count, 3);
     assert_string_equal(m.lyrics[0], "line1");
@@ -119,10 +120,20 @@ static void test_parse_block_no_change(void **state) {
     assert_false(parse_block(input));
 }
 
+static void test_parse_block_hash_in_value(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "TITLE|Song #1 (feat. Artist)	ARTIST|Rock Band	ALBUM|Greatest # Hits";
+    assert_true(parse_block(input));
+    assert_string_equal(m.title, "Song #1 (feat. Artist)");
+    assert_string_equal(m.artist, "Rock Band");
+    assert_string_equal(m.album, "Greatest # Hits");
+}
+
 static void test_parse_block_order_independence(void **state) {
     (void)state;
     clear_metadata();
-    char input[] = "ARTIST|Band#TITLE|Song#ALBUM|Album#GENRE|Jazz#STATUS|Paused";
+    char input[] = "ARTIST|Band	TITLE|Song	ALBUM|Album	GENRE|Jazz	STATUS|Paused";
     assert_true(parse_block(input));
     assert_string_equal(m.artist, "Band");
     assert_string_equal(m.title, "Song");
@@ -146,6 +157,7 @@ int main(void) {
         cmocka_unit_test(test_parse_block_lyrics_on_new_song),
         cmocka_unit_test(test_parse_block_status_change_only),
         cmocka_unit_test(test_parse_block_no_change),
+        cmocka_unit_test(test_parse_block_hash_in_value),
         cmocka_unit_test(test_parse_block_order_independence),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);

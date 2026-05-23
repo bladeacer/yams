@@ -54,6 +54,7 @@ void draw_dashboard() {
 
     if (!player_active) {
         draw_fallback_screen(main_win, geo.max_y - 2, geo.max_x - 2);
+        resize_pending = false;
     } else {
         if (meta_sub) render_metadata_pane(meta_sub);
         if (lyr_sub)  render_lyrics_pane(lyr_sub);

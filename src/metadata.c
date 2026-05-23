@@ -22,7 +22,7 @@ bool parse_block(char *block) {
     bool status_changed = false;
     char *saveptr_outer;
     
-    char *token = strtok_r(block, "#", &saveptr_outer);
+    char *token = strtok_r(block, "\t", &saveptr_outer);
     
     while (token) {
         char *sep = strchr(token, '|');
@@ -102,7 +102,7 @@ bool parse_block(char *block) {
                     break;
             }
         }
-        token = strtok_r(NULL, "#", &saveptr_outer);
+        token = strtok_r(NULL, "\t", &saveptr_outer);
     }
     
     return (song_changed || status_changed);
