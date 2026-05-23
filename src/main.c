@@ -15,6 +15,7 @@
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
+#include "art.h"
 #include "debug.h"
 #include "config.h"
 
@@ -223,6 +224,13 @@ static void handle_keypress(int ch, long now) {
         case 'a':
             show_art_mode_selector();
             break;
+        case 'c': {
+            char *msg = clear_art_cache();
+            DBG("Cache: %s", msg);
+            free(msg);
+            resize_pending = true;
+            break;
+        }
         case '+':
             set_seek_interval(get_seek_interval() + 5);
             resize_pending = true;
@@ -301,6 +309,7 @@ void show_help_overlay(long now) {
 
     HELP_L("q",     "Quit Application");
     HELP_L("r",     "Force Refresh UI");
+    HELP_L("c",     "Clear Art Cache");
     HELP_L("SPC",   "Play / Pause");
     HELP_L("h/<-",  "Previous Track");
     HELP_L("l/->",  "Next Track");
@@ -421,6 +430,8 @@ int main() {
     
     if (player_fd != -1)
         fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL, 0) | O_NONBLOCK);
+
+    resize_pending = true;
 
     while (1) {
         long now = get_ms();

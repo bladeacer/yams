@@ -1,8 +1,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <errno.h>
 #include <libavformat/avformat.h>
+#include <libavformat/avio.h>
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
 #include <chafa.h>
@@ -270,16 +275,119 @@ static void render_pixel_to_gs(uint8_t *pixels, int img_w, int img_h,
     chafa_canvas_config_unref(config);
 }
 
+static char *get_cache_dir(void) {
+    const char *cache_base = getenv("XDG_CACHE_HOME");
+    if (cache_base) {
+        char *dir; int ret = asprintf(&dir, "%s/yams/art", cache_base);
+        if (ret > 0) return dir;
+    }
+    const char *home = getenv("HOME");
+    if (home) {
+        char *dir; int ret = asprintf(&dir, "%s/.cache/yams/art", home);
+        if (ret > 0) return dir;
+    }
+    return strdup("/tmp/yams-art-cache");
+}
+
+static void ensure_dir(const char *dir) {
+    char *d = strdup(dir);
+    if (!d) return;
+    for (char *p = d + 1; *p; p++) {
+        if (*p == '/') { *p = '\0'; mkdir(d, 0755); *p = '/'; }
+    }
+    mkdir(d, 0755);
+    free(d);
+}
+
+static unsigned long hash_str(const char *str) {
+    unsigned long hash = 5381;
+    int c;
+    while ((c = *str++)) hash = ((hash << 5) + hash) + (unsigned char)c;
+    return hash;
+}
+
+static bool is_remote_url(const char *url) {
+    return strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0;
+}
+
+static char *get_cached_path(const char *url) {
+    char *cache_dir = get_cache_dir();
+    ensure_dir(cache_dir);
+    char *path = NULL;
+    asprintf(&path, "%s/%lx", cache_dir, hash_str(url));
+    free(cache_dir);
+    return path;
+}
+
+static bool download_to_cache(const char *url, const char *cache_path) {
+    AVIOContext *io = NULL;
+    if (avio_open(&io, url, AVIO_FLAG_READ) < 0) return false;
+    FILE *f = fopen(cache_path, "wb");
+    if (!f) { avio_close(io); return false; }
+    uint8_t buf[8192];
+    int n;
+    while ((n = avio_read(io, buf, sizeof(buf))) > 0) {
+        if (fwrite(buf, 1, n, f) != (size_t)n) {
+            fclose(f); avio_close(io); unlink(cache_path); return false;
+        }
+    }
+    fclose(f);
+    avio_close(io);
+    return true;
+}
+
+char *clear_art_cache(void) {
+    char *cache_dir = get_cache_dir();
+    char *result = NULL;
+    DIR *d = opendir(cache_dir);
+    if (d) {
+        struct dirent *entry;
+        int removed = 0;
+        while ((entry = readdir(d)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+            char *path = NULL;
+            asprintf(&path, "%s/%s", cache_dir, entry->d_name);
+            if (unlink(path) == 0) removed++;
+            free(path);
+        }
+        closedir(d);
+        asprintf(&result, "Cache cleared: %d file(s) removed", removed);
+    } else {
+        asprintf(&result, "Cache directory not found");
+    }
+    free(cache_dir);
+    return result;
+}
+
 char *render_art_to_buffer(int x, int y, int w, int h,
                             ChafaSymbolTags tags, ChafaPixelMode pixel_mode, int is_ascii) {
     char *input_url = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     if (!input_url || strlen(input_url) < 5) return NULL;
 
+    char *resolved = NULL;
+    if (is_remote_url(input_url)) {
+        char *cache_path = get_cached_path(input_url);
+        if (cache_path) {
+            if (access(cache_path, F_OK) == 0)
+                resolved = cache_path;
+            else if (download_to_cache(input_url, cache_path))
+                resolved = cache_path;
+            else {
+                free(cache_path);
+                resolved = strdup(input_url);
+            }
+        }
+    }
+    if (!resolved) resolved = strdup(input_url);
+
     uint8_t *pixels = NULL;
     int img_w, img_h;
 
-    if (extract_frame(input_url, &pixels, &img_w, &img_h) != 0)
+    if (extract_frame(resolved, &pixels, &img_w, &img_h) != 0) {
+        free(resolved);
         return NULL;
+    }
+    free(resolved);
 
     composite_alpha_on_black(pixels, img_w, img_h);
 

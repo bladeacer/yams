@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <wchar.h>
 
 const char* safe_str(const char* s) {
@@ -62,6 +63,7 @@ void draw_help_text(WINDOW *win, int y, int x) {
     wattron(win, A_BOLD);
     draw_item(win, "q", "Quit", &cur_y, &cur_x, x, max_h, max_w);
     draw_item(win, "r", "Refresh", &cur_y, &cur_x, x, max_h, max_w);
+    draw_item(win, "c", "Clear Cache", &cur_y, &cur_x, x, max_h, max_w);
     draw_item(win, "?", "Help", &cur_y, &cur_x, x, max_h, max_w);
 
     char seek_str[32];
@@ -118,9 +120,11 @@ void clear_art_area(void) {
     if (!clear) return;
     memset(clear, ' ', geo.art_w);
     clear[geo.art_w] = '\0';
-    for (int r = 0; r < geo.art_h; r++)
-        printf("\x1b[%d;%dH%s", abs_y + r, abs_x, clear);
-    fflush(stdout);
+    char buf[1024];
+    for (int r = 0; r < geo.art_h; r++) {
+        int n = snprintf(buf, sizeof(buf), "\x1b[%d;%dH%s", abs_y + r, abs_x, clear);
+        if (n > 0) write(STDOUT_FILENO, buf, (size_t)(n < (int)sizeof(buf) ? n : (int)sizeof(buf)));
+    }
     free(clear);
 }
 
@@ -128,7 +132,6 @@ void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     int mid_y = max_y / 2;
     int mid_x = max_x / 2;
     werase(win);
-    clear_art_area();
 
     wattron(win, A_BOLD);
     const char* logo[] = {
