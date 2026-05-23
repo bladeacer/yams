@@ -278,7 +278,7 @@ void show_help_overlay(long now) {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
-    int h = 16, w = 45;
+    int h = 17, w = 45;
     int start_y = (max_y - h) / 2;
     int start_x = (max_x - w) / 2;
 

@@ -109,12 +109,12 @@ void show_art_mode_selector(void) {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
-    int vis_rows = max_y - 6;
+    int vis_rows = max_y - 7;
     if (vis_rows > ART_MODE_COUNT) vis_rows = ART_MODE_COUNT;
-    if (vis_rows < 6) vis_rows = 6;
+    if (vis_rows < 4) vis_rows = 4;
 
-    int w = 42;
-    int h = vis_rows + 5;
+    int w = 44;
+    int h = vis_rows + 6;
     int sy = (max_y - h) / 2;
     int sx = (max_x - w) / 2;
 
@@ -192,13 +192,20 @@ void show_art_mode_selector(void) {
             }
         }
 
-        mvwprintw(mwin, h - 3, 2, "\x18\x19/\x11\x0E scroll  ENTER select");
-        mvwprintw(mwin, h - 2, 2, "ESC quit  Type to filter");
+        mvwprintw(mwin, h - 5, 2, "arrows/vim  scroll  ENTER select");
+        mvwprintw(mwin, h - 4, 2, "ESC quit  Type to filter");
 
-        mvwprintw(mwin, h - 1, 2, "Filter: ");
+        mvwprintw(mwin, h - 3, 2, "Filter: ");
         if (filter_len > 0) {
+            int max_fw = w - 12;
+            int vis_len = filter_len;
+            int start = 0;
+            if (vis_len > max_fw) {
+                start = vis_len - max_fw;
+                vis_len = max_fw;
+            }
             wattron(mwin, A_BOLD);
-            mvwprintw(mwin, h - 1, 10, "%s", filter);
+            mvwprintw(mwin, h - 3, 10, "%.*s", vis_len, filter + start);
             wattroff(mwin, A_BOLD);
         }
 

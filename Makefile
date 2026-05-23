@@ -26,8 +26,18 @@ FULL_CFLAGS := $(COMMON_FLAGS) $(OPTIM_FLAGS)
 help: ## Show this help message
 	@echo "Usage: make [target]"
 	@echo ""
-	@echo "Targets:"
+	@echo "Build targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Binary sizes (x86_64 Linux, dynamically linked via system libs):"
+	@echo "  make run       ~ 300 kB (debug, unstripped)"
+	@echo "  make release   ~ 250 kB (release, stripped)"
+	@echo "  make install   ~ 250 kB (release, stripped, installed)"
+	@echo ""
+	@echo "For static builds, pass -Db_staticpic=true -Dc_args='-static' to meson:"
+	@echo "  meson setup build --buildtype=release -Dtests=false -Dlogging=false -Dc_args='-static'"
+	@echo "  ninja -C build"
+	@echo "  Static binary ~ 1.5 MB (x86_64)"
 
 setup: ## Initialize meson build directory (Debug mode)
 	@meson setup build --buildtype=debugoptimized --optimization=3

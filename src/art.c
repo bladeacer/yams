@@ -232,10 +232,10 @@ static void render_chafa_to_gs(uint8_t *pixels, int img_w, int img_h,
 }
 
 static void render_pixel_to_gs(uint8_t *pixels, int img_w, int img_h,
-                                int w, int h,
+                                int cell_w, int cell_h,
                                 ChafaPixelMode pixel_mode, GString *out) {
     ChafaCanvasConfig *config = chafa_canvas_config_new();
-    chafa_canvas_config_set_geometry(config, w, h);
+    chafa_canvas_config_set_geometry(config, cell_w, cell_h);
     chafa_canvas_config_set_preprocessing_enabled(config, FALSE);
     chafa_canvas_config_set_bg_color(config, 0x000000);
     chafa_canvas_config_set_pixel_mode(config, pixel_mode);
@@ -298,6 +298,35 @@ char *render_art_to_buffer(int x, int y, int w, int h,
             render_chafa_to_gs(pixels, img_w, img_h, x, y, w, h, tags, out);
         }
     } else {
+        int px_w = w * 10;
+        int px_h = h * 24;
+        if (px_w < 1) px_w = 1;
+        if (px_h < 1) px_h = 1;
+
+        float src_aspect = (float)img_w / (float)img_h;
+        float dst_aspect = (float)px_w / (float)px_h;
+
+        int rw, rh;
+        if (src_aspect > dst_aspect) {
+            rw = px_w;
+            rh = (int)(px_w / src_aspect);
+            if (rh < 1) rh = 1;
+        } else {
+            rh = px_h;
+            rw = (int)(px_h * src_aspect);
+            if (rw < 1) rw = 1;
+        }
+
+        uint8_t *resized = malloc((size_t)rw * rh * 4);
+        if (resized) {
+            stbir_resize_uint8(pixels, img_w, img_h, 0,
+                               resized, rw, rh, 0, 4);
+            free(pixels);
+            pixels = resized;
+            img_w = rw;
+            img_h = rh;
+        }
+
         char clear[512];
         int cw = w < 510 ? w : 510;
         memset(clear, ' ', cw);

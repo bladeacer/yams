@@ -96,17 +96,23 @@ git clone --depth=1 https://codeberg.org/bladeacer/yams.git
 
 - Use `make run` to install binary with debug to `./build/yams`.
 
-### Binary size comparison (x86_64 Linux)
+### Binary size (x86_64 Linux, dynamically linked)
 
-| `make` flag | Binary size | Linkage |
+| Command | Binary size | Notes |
 | --- | --- | --- |
-| `make install` | ~ 36 kB | placeholder |
-| `make release` | ~ 1.5 MB | static-linked |
-| `make release` | ~ 600 kB | dynamically linked |
+| `make run` | ~ 300 kB | Debug build, unstripped |
+| `make release` | ~ 250 kB | Release build, stripped, in `./build/yams` |
+| `make install` | ~ 250 kB | Release build, stripped, installed to `/usr/local/bin` |
 
-> Static-linked figures are based on an x86_64 build with musl-gcc and all
-> dependencies compiled statically. Dynamically linked builds are smaller since
-> libchafa, libavcodec, etc. are loaded from the system.
+**Static build:** For a fully static binary (no runtime library dependencies), configure meson with `-Dc_args='-static'`:
+```bash
+meson setup build --buildtype=release -Dtests=false -Dlogging=false -Dc_args='-static'
+ninja -C build
+```
+Static binary size is ~ 1.5 MB on x86_64 Linux. This includes libchafa, ffmpeg,
+glib, ncursesw, and all other dependencies linked directly into the binary.
+> Note: Static linking with ffmpeg's libavcodec requires the static versions of
+> the ffmpeg libraries to be installed on your system.
 
 ## LLM Usage Disclaimer
 
