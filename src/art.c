@@ -8,10 +8,15 @@
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
+#include <chafa.h>
+#include "stb_image_resize.h"
+#include "trim.h"
 #include "metadata.h"
 #include "art.h"
 #include "utils.h"
-#include "img2ascii.h"
+#include "debug.h"
+
+#define FUZZ_10PCT 25
 
 static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w, int *out_h) {
     AVFormatContext *fmt_ctx = NULL;
@@ -141,6 +146,82 @@ static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w, int 
     return 0;
 }
 
+static void composite_alpha_on_black(uint8_t *pixels, int w, int h) {
+    for (int i = 0; i < w * h; i++) {
+        int off = i * 4;
+        uint8_t a = pixels[off + 3];
+        if (a == 0) {
+            pixels[off] = 0;
+            pixels[off + 1] = 0;
+            pixels[off + 2] = 0;
+        } else if (a < 255) {
+            pixels[off]     = (uint16_t)pixels[off]     * a / 255;
+            pixels[off + 1] = (uint16_t)pixels[off + 1] * a / 255;
+            pixels[off + 2] = (uint16_t)pixels[off + 2] * a / 255;
+        }
+        pixels[off + 3] = 255;
+    }
+}
+
+static void render_chafa(uint8_t *pixels, int img_w, int img_h,
+                         int x, int y, int w, int h, int braille) {
+    ChafaSymbolMap *symbol_map = chafa_symbol_map_new();
+    chafa_symbol_map_add_by_tags(symbol_map,
+        braille ? CHAFA_SYMBOL_TAG_BRAILLE : CHAFA_SYMBOL_TAG_ASCII);
+
+    ChafaCanvasConfig *config = chafa_canvas_config_new();
+    chafa_canvas_config_set_geometry(config, w, h);
+    chafa_canvas_config_set_symbol_map(config, symbol_map);
+    chafa_canvas_config_set_fg_only_enabled(config, TRUE);
+    chafa_canvas_config_set_bg_color(config, 0x000000);
+    chafa_canvas_config_set_preprocessing_enabled(config, FALSE);
+    chafa_canvas_config_set_canvas_mode(config, CHAFA_CANVAS_MODE_INDEXED_256);
+    chafa_canvas_config_set_optimizations(config, CHAFA_OPTIMIZATION_NONE);
+    chafa_canvas_config_set_dither_mode(config, CHAFA_DITHER_MODE_ORDERED);
+    chafa_canvas_config_set_dither_intensity(config, 0.3);
+
+    ChafaCanvas *canvas = chafa_canvas_new(config);
+    chafa_canvas_draw_all_pixels(canvas, CHAFA_PIXEL_RGBA8_UNASSOCIATED,
+                                 pixels, img_w, img_h, img_w * 4);
+
+    GString *gs = chafa_canvas_print(canvas, NULL);
+
+    if (!gs) {
+        chafa_canvas_unref(canvas);
+        chafa_canvas_config_unref(config);
+        chafa_symbol_map_unref(symbol_map);
+        return;
+    }
+
+    char clear[512];
+    int cw = w < 510 ? w : 510;
+    memset(clear, ' ', cw);
+    clear[cw] = '\0';
+    for (int r = 0; r < h; r++)
+        printf("\x1b[%d;%dH%s", y + 1 + r, x + 1, clear);
+
+    printf("\x1b[s");
+    int row = 0;
+    char *line = gs->str;
+    char *next;
+    while ((next = strchr(line, '\n')) && row < h) {
+        *next = '\0';
+        printf("\x1b[%d;%dH%s", y + 1 + row, x + 1, line);
+        row++;
+        line = next + 1;
+    }
+    if (*line && row < h)
+        printf("\x1b[%d;%dH%s", y + 1 + row, x + 1, line);
+
+    printf("\x1b[u\x1b[0m");
+    fflush(stdout);
+
+    g_string_free(gs, TRUE);
+    chafa_canvas_unref(canvas);
+    chafa_canvas_config_unref(config);
+    chafa_symbol_map_unref(symbol_map);
+}
+
 pid_t render_art(int x, int y, int w, int h) {
     char *input_url = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
     if (!input_url || strlen(input_url) < 5) return -1;
@@ -151,6 +232,18 @@ pid_t render_art(int x, int y, int w, int h) {
     if (extract_frame(input_url, &pixels, &img_w, &img_h) != 0)
         return -1;
 
+    composite_alpha_on_black(pixels, img_w, img_h);
+
+    BBox bbox = find_content_bbox(pixels, img_w, img_h, FUZZ_10PCT);
+    if (bbox.top > 0 || bbox.bottom < img_h - 1 ||
+        bbox.left > 0 || bbox.right < img_w - 1) {
+        uint8_t *cropped = crop_pixels(pixels, img_w, img_h, bbox, &img_w, &img_h);
+        if (cropped) {
+            free(pixels);
+            pixels = cropped;
+        }
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
         free(pixels);
@@ -159,43 +252,27 @@ pid_t render_art(int x, int y, int w, int h) {
 
     if (pid == 0) {
         setpgid(0, 0);
+        int braille = get_braille_mode();
 
-        img2ascii_opts opts = {
-            .target_width = get_braille_mode() ? w * 2 : w,
-            .target_height = 0,
-            .fuzziness = 1,
-            .braille = get_braille_mode(),
-        };
+        if (!braille) {
+            int ascii_w = (int)(w * 1.5);
+            if (ascii_w < 1) ascii_w = 1;
+            int rh = h > 0 ? h : 1;
 
-        char *art = img2ascii(pixels, img_w, img_h, 4, opts);
-        free(pixels);
-
-        if (!art) _exit(1);
-
-        char clear[512];
-        int cw = w < 510 ? w : 510;
-        memset(clear, ' ', cw);
-        clear[cw] = '\0';
-        for (int r = 0; r < h; r++)
-            printf("\x1b[%d;%dH%s", y + 1 + r, x + 1, clear);
-
-        printf("\x1b[s");
-        int row = 0;
-        char *line = art;
-        char *next;
-        while ((next = strchr(line, '\n')) && row < h) {
-            *next = '\0';
-            printf("\x1b[%d;%dH%s", y + 1 + row, x + 1, line);
-            row++;
-            line = next + 1;
+            uint8_t *resized = malloc((size_t)ascii_w * rh * 4);
+            if (resized) {
+                stbir_resize_uint8(pixels, img_w, img_h, 0,
+                                   resized, ascii_w, rh, 0, 4);
+                render_chafa(resized, ascii_w, rh, x, y, w, rh, 0);
+                free(resized);
+            } else {
+                render_chafa(pixels, img_w, img_h, x, y, w, h, 0);
+            }
+        } else {
+            render_chafa(pixels, img_w, img_h, x, y, w, h, 1);
         }
-        if (*line && row < h)
-            printf("\x1b[%d;%dH%s", y + 1 + row, x + 1, line);
 
-        printf("\x1b[u\x1b[0m");
-        fflush(stdout);
-
-        free(art);
+        free(pixels);
         _exit(0);
     }
 

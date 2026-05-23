@@ -245,10 +245,12 @@ static void handle_keypress(int ch, long now) {
         case 'j':
             snprintf(seek_cmd, sizeof(seek_cmd), "%d-", get_seek_interval());
             run_player_cmd("position", seek_cmd);
+            resize_pending = true;
             break;
         case 'k':
             snprintf(seek_cmd, sizeof(seek_cmd), "%d+", get_seek_interval());
             run_player_cmd("position", seek_cmd);
+            resize_pending = true;
             break;
         case 'a':
             show_braille_toggle();
@@ -267,11 +269,13 @@ static void handle_keypress(int ch, long now) {
         case 'h':
         case KEY_LEFT:
             run_player_cmd("previous", NULL);
+            resize_pending = true;
             last_draw_time = 0;
             break;
         case 'l':
         case KEY_RIGHT:
             run_player_cmd("next", NULL);
+            resize_pending = true;
             last_draw_time = 0;
             break;
         case 'r':
@@ -379,14 +383,26 @@ static void handle_player_data() {
     bool data_read = false;
 
     while ((n = read(player_fd, chunk, sizeof(chunk))) > 0) {
-        if (buf_idx + n < BUFFER_SIZE - 1) {
-            memcpy(poll_buffer + buf_idx, chunk, n);
-            buf_idx += n;
+        if (buf_idx + n >= BUFFER_SIZE - 1) {
+            char *last = NULL;
+            char *scan = poll_buffer;
+            while ((scan = strstr(scan, "[[END]]"))) {
+                last = scan;
+                scan += 7;
+            }
+            if (last) {
+                size_t trailing = buf_idx - (last - poll_buffer + 7);
+                memmove(poll_buffer, last + 7, trailing);
+                buf_idx = trailing;
+            } else {
+                buf_idx = 0;
+            }
             poll_buffer[buf_idx] = '\0';
-            data_read = true;
-        } else {
-            buf_idx = 0;
         }
+        memcpy(poll_buffer + buf_idx, chunk, n);
+        buf_idx += n;
+        poll_buffer[buf_idx] = '\0';
+        data_read = true;
     }
 
     if (data_read) {

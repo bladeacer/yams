@@ -11,6 +11,7 @@ void draw_metadata_line(WINDOW *win, int *y, const char *label,
                         const char *value, int color_pair, bool bold);
 
 /* Specialized screens */
+void clear_art_area(void);
 void draw_help_text(WINDOW *win, int y, int x);
 void draw_fallback_screen(WINDOW *win, int max_y, int max_x);
 

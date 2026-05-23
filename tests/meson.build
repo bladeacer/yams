@@ -25,3 +25,12 @@ test_config = executable('test_config',
 test('metadata parsing', test_metadata)
 test('utility functions', test_utils)
 test('config functions', test_config)
+
+test_art = executable('test_art',
+  ['test_art.c', '../lib/trim.c'],
+  dependencies: [cmocka_dep],
+  include_directories: inc,
+  c_args: test_c_args,
+)
+
+test('art trimming functions', test_art)

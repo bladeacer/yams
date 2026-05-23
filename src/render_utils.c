@@ -2,8 +2,10 @@
 #include "utils.h"
 #include "debug.h"
 #include "metadata.h"
+#include "layout.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 const char* safe_str(const char* s) {
     return (s && strlen(s) > 0) ? s : "Unknown";
@@ -86,10 +88,26 @@ void draw_metadata_line(WINDOW *win, int *y, const char *label, const char *valu
     if (pair > 0) wattroff(win, COLOR_PAIR(pair));
 }
 
+void clear_art_area(void) {
+    if (geo.art_w <= 0 || geo.art_h <= 0) return;
+    int art_x = 1, art_y = 1;
+    int abs_y = 1 + art_y;
+    int abs_x = 1 + art_x;
+    char *clear = malloc((size_t)geo.art_w + 1);
+    if (!clear) return;
+    memset(clear, ' ', geo.art_w);
+    clear[geo.art_w] = '\0';
+    for (int r = 0; r < geo.art_h; r++)
+        printf("\x1b[%d;%dH%s", abs_y + r, abs_x, clear);
+    fflush(stdout);
+    free(clear);
+}
+
 void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     int mid_y = max_y / 2;
     int mid_x = max_x / 2;
     werase(win);
+    clear_art_area();
 
     wattron(win, A_BOLD);
     const char* logo[] = {

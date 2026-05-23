@@ -28,6 +28,7 @@
             playerctl
             ffmpeg
             hyperfine
+            chafa
           ];
         };
       }
