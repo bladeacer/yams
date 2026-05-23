@@ -71,9 +71,9 @@ Built on the shoulders of giants.
 - meson (build)
 - ninja (build)
 - cmocka (unit testing; meson falls back to a bundled subproject if not found)
-- hyperfine (benchmarking)
-- perf (benchmarking)
-- strace
+<!-- - hyperfine (benchmarking) -->
+<!-- - perf (benchmarking) -->
+<!-- - strace -->
 - awk
 
 ## Platform support
