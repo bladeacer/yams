@@ -12,13 +12,14 @@ Yet another media screensaver.
 - CJK/Unicode Support (`ncursesw`)
 - Currently Playing Media (`playerctl`)
   - Metadata (Media name/title/etc.)
-  - Album art rendered as ASCII/braille art (23 rendering modes)
+  - Album art rendered as ASCII/braille/sixel art (24 rendering modes)
   - Lyrics (if available)
   - Play/Pause
   - Next/Previous
   - Seek Interval (go forward/backward by x seconds, can set amount)
 - Art rendering modes (press `a`):
   - 23 chafa symbol sets: ascii, braille, block, dot, border, diagonal, half, quad, sextant, technical, geometric, latin, digit, alpha, stipple, solid, inverted, narrow, wide, ambiguous, legacy, extra, all
+  - 1 pixel mode: sixel (requires sixel-capable terminal)
 
 - Help Menu for keybinds
 - Refresh Button (if auto-refresh/polling does not work)

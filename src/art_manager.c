@@ -68,7 +68,7 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
     if (force || timer_expired) {
         const ArtModeEntry *mode = &art_modes[get_art_mode()];
         char *new_buf = render_art_to_buffer(2, 1, w, h,
-                                              mode->tags, mode->is_ascii);
+                                              mode->tags, mode->pixel_mode, mode->is_ascii);
         if (new_buf) {
             art_buffer = new_buf;
             art_buffer_len = strlen(new_buf);
