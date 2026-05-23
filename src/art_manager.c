@@ -1,6 +1,6 @@
 #include <string.h>
-#include <sys/wait.h>
-#include <signal.h>
+#include <unistd.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include "art_manager.h"
 #include "art.h"
@@ -11,17 +11,39 @@
 static char last_art_path[4096] = {0};
 static char last_title_sig[2048] = {0};
 static long last_metadata_change_time = 0;
-static pid_t art_pid = -1;
-static bool render_pending = false;
+static long last_render_time = 0;
+
+static char *art_buffer = NULL;
+static size_t art_buffer_len = 0;
+
+bool art_refresh_requested = false;
 
 long get_last_metadata_change_time(void) {
     return last_metadata_change_time;
 }
 
+long get_last_render_time(void) {
+    return last_render_time;
+}
+
+bool is_art_active(void) {
+    return (art_buffer != NULL);
+}
+
 void reset_art() {
+    free(art_buffer);
+    art_buffer = NULL;
+    art_buffer_len = 0;
     last_art_path[0] = '\0';
     last_title_sig[0] = '\0';
     last_metadata_change_time = get_ms();
+    art_refresh_requested = true;
+}
+
+void replay_art_buffer(void) {
+    if (art_buffer && art_buffer_len > 0) {
+        write(STDOUT_FILENO, art_buffer, art_buffer_len);
+    }
 }
 
 void update_and_render_art(const char* src, const char* sig, int w, int h, bool force) {
@@ -31,29 +53,24 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
     bool path_changed = (strcmp(src, last_art_path) != 0) || (strcmp(sig, last_title_sig) != 0);
 
     if (path_changed || force) {
-        if (art_pid > 0) {
-            kill(-art_pid, SIGKILL); 
-            waitpid(art_pid, NULL, WNOHANG);
-            art_pid = -1;
-        }
+        free(art_buffer);
+        art_buffer = NULL;
+        art_buffer_len = 0;
         strncpy(last_art_path, src, sizeof(last_art_path)-1);
         strncpy(last_title_sig, sig, sizeof(last_title_sig)-1);
-        last_metadata_change_time = now;
-        render_pending = true;
     }
 
-    int status;
-    pid_t reaped;
-    while ((reaped = waitpid(-1, &status, WNOHANG)) > 0) {
-        if (reaped == art_pid) art_pid = -1;
-    }
+    if (art_buffer != NULL)
+        return;
 
     bool timer_expired = (now - last_metadata_change_time >= get_art_debounce());
-    
-    if (render_pending && (force || timer_expired)) {
-        if (art_pid == -1) {
-            art_pid = render_art(2, 1, w, h); 
-            render_pending = false; 
+
+    if (force || timer_expired) {
+        char *new_buf = render_art_to_buffer(2, 1, w, h);
+        if (new_buf) {
+            art_buffer = new_buf;
+            art_buffer_len = strlen(new_buf);
+            last_render_time = get_ms();
         }
     }
 }

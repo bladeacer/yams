@@ -48,6 +48,9 @@ void draw_dashboard() {
 
     if (player_active && !was_active) {
         clear_art_area();
+        if (!art_update_requested) {
+            reset_art();
+        }
     }
 
     bool identity_changed = (strcmp(snap_title, last_known_title) != 0 || 
@@ -60,28 +63,36 @@ void draw_dashboard() {
         art_update_requested = true;
     }
 
-    if (resize_pending) {
+    if (art_refresh_requested) {
         art_update_requested = true;
+        art_refresh_requested = false;
     }
 
     // Exactly one of fallback or regular panes is rendered per cycle
+    // In the active path, avoid update_panels() because it refreshes
+    // main_win (including the art area) with blanks via wnoutrefresh,
+    // which overwrites the ANSI art written directly by the child process.
+    // The derwin wnoutrefresh calls in render_metadata_pane / render_lyrics_pane
+    // only copy their own row ranges, preserving the art area.
     if (!player_active) {
         draw_fallback_screen(main_win, geo.max_y - 2, geo.max_x - 2);
+        update_panels();
+        doupdate();
         resize_pending = false;
     } else {
         if (meta_sub) render_metadata_pane(meta_sub);
         if (lyr_sub)  render_lyrics_pane(lyr_sub);
+        doupdate();
+        replay_art_buffer();
     }
 
-    update_panels();
-    doupdate();
-
     if (player_active) {
-        long elapsed = get_ms() - get_last_metadata_change_time();
+        long now = get_ms();
+        long elapsed = now - get_last_metadata_change_time();
 
         bool song_changed = (art_update_requested && elapsed >= get_art_debounce());
 
-        bool must_resize = resize_pending;
+        bool must_resize = (art_update_requested && elapsed < get_art_debounce());
 
         if (song_changed || must_resize) {
             const char *art_src = (strlen(snap_art_url) > 5) ? snap_art_url : snap_path;
@@ -89,6 +100,8 @@ void draw_dashboard() {
             snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(snap_title), safe_str(snap_artist));
 
             update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, must_resize);
+
+            replay_art_buffer();
 
             art_update_requested = false;
             resize_pending = false;

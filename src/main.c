@@ -193,6 +193,7 @@ void show_seek_input() {
         if (val > 0) set_seek_interval(val);
     }
 
+    reset_art();
     resize_pending = true;
 }
 
@@ -372,7 +373,8 @@ void show_help_overlay(long now) {
 
     del_panel(help_panel);
     delwin(help_win);
-    
+
+    reset_art();
     resize_pending = true;
     help_active = false;
 }

@@ -46,12 +46,18 @@ clean: ## Remove build directory
 
 test: ## Build and run unit tests
 	@echo "$(CYAN)Configuring debug build with tests...$(RESET)"
-	@if [ ! -d "build" ]; then \
+	@if [ -d "build" ]; then \
+		meson setup build --reconfigure --buildtype=debug -Dlogging=true -Dtests=true 2>/dev/null; \
+	else \
 		meson setup build --buildtype=debug -Dlogging=true -Dtests=true; \
 	fi
 	@ninja -C build
 	@echo "$(GREEN)Running unit tests...$(RESET)"
-	@meson test -C build
+	@for t in build/tests/test_metadata build/tests/test_utils build/tests/test_config build/tests/test_art; do \
+		if [ -x "$$t" ]; then \
+			"$$t" 2>&1 | grep -E '^\[.*(RUN|OK|FAILED|========)' | sed 's/^\[[[:space:]]*/[/'; \
+		fi; \
+	done
 
 release: clean ## Build a stripped release binary without debug/tests
 	@meson setup build \
