@@ -49,7 +49,7 @@ void recreate_layout() {
     main_panel = new_panel(main_win);
 
     if (geo.horizontal) {
-        geo.art_w = (safe_w * 0.4 > 54) ? 54 : (int)(safe_w * 0.4);
+        geo.art_w = (safe_w * 0.4 > 80) ? 80 : (int)(safe_w * 0.4);
         geo.art_h = (int)(safe_h * 0.6);
         int split_x = geo.art_w + 4;
         

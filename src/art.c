@@ -11,6 +11,7 @@
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
 #include <chafa.h>
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize.h"
 #include "trim.h"
 #include "metadata.h"

@@ -42,7 +42,6 @@ sources = [
   'src/art_manager.c',
   'src/render_utils.c',
   'src/config.c',
-  'lib/img2ascii.c',
   'lib/trim.c',
 ]
 inc = include_directories('include', 'lib')

@@ -37,7 +37,7 @@ test_art = executable('test_art',
 test('art trimming functions', test_art)
 
 cache_deps = [cmocka_dep, chafa, libavformat, libavcodec, libswscale, libavutil, m_dep]
-cache_sources = ['../src/art.c', '../src/art_manager.c', '../src/metadata.c', '../src/utils.c', '../src/config.c', '../lib/img2ascii.c', '../lib/trim.c']
+cache_sources = ['../src/art.c', '../src/art_manager.c', '../src/metadata.c', '../src/utils.c', '../src/config.c', '../lib/trim.c']
 
 test_art_cache = executable('test_art_cache',
   ['test_art_cache.c'] + cache_sources,

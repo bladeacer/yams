@@ -152,8 +152,6 @@ exit with Ctrl+C instead of q.
 
 Should work with any other MPRIS-compliant media players.
 
-`playerctl` has a list of officially supported ones, however.
-
 > PRs welcome to add tested media player entries.
 
 ## Planned
