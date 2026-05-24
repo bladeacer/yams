@@ -103,13 +103,15 @@ void draw_dashboard() {
         }
     }
 
-    if (status_msg[0]) {
+    {
         long now = get_ms();
-        if (now - status_msg_time > 3000) {
+        int my, mx;
+        getmaxyx(stdscr, my, mx);
+        if (status_msg[0] && now - status_msg_time > 3000) {
             status_msg[0] = '\0';
-        } else {
-            int my, mx;
-            getmaxyx(stdscr, my, mx);
+            mvwprintw(stdscr, my - 1, 1, "%*s", mx - 2, "");
+            wnoutrefresh(stdscr);
+        } else if (status_msg[0]) {
             mvwprintw(stdscr, my - 1, 1, "%-*s", mx - 2, status_msg);
             wnoutrefresh(stdscr);
         }

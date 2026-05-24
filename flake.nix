@@ -20,17 +20,18 @@
       {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
+            gnumake
             meson
+            ninja
             pkg-config
             cmake
             ncurses
-            ninja
             playerctl
             ffmpeg
-            hyperfine
             chafa
             glib
             cmocka
+            hyperfine
           ];
         };
       }

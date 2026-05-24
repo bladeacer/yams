@@ -1,38 +1,51 @@
 # yams
-
 ![Screenshot](preview.webp)
 
-Yet another media screensaver.
-> Or status indicator
-
-`playerctl` wrapper go brr.
+yams (yet another media screensaver) is a media screensaver that displays
+MPRIS metadata and album art (ASCII/braille/sixel/others) in the terminal.
 
 ## Features
 
-- CJK/Unicode Support (`ncursesw`)
-- Currently Playing Media (`playerctl`)
-  - Metadata (title, artist, album, composer, genre, length, path, lyrics)
-  - Album art rendered as ASCII/braille/sixel (24 rendering modes)
-  - Lyrics (if available via MPRIS `xesam:asText`)
-  - Play/Pause, Next/Previous, Seek forward/backward
-- Art rendering modes (press `a`):
-  - 23 chafa symbol sets: ascii, braille, block, dot, border, diagonal, half, quad, sextant, technical, geometric, latin, digit, alpha, stipple, solid, inverted, narrow, wide, ambiguous, legacy, extra, all
-  - 1 pixel mode: sixel (requires sixel-capable terminal)
-- Remote album art caching — downloaded art is stored locally under `~/.cache/yams/art/` for reuse without re-downloading
-- Auto-retry for failed art downloads — retries at 1s/2s/5s/10s/30s intervals with visual feedback
-- Cache management — clear art cache (`c`) and view cache size in the help bar
-- Debounced art re-rendering (configurable interval, default 200ms)
-- Player health monitoring — automatic fallback when the active player disappears, using event-driven `waitpid` detection with 2s stale-data polling fallback
-- Player selector (`p`) — switch between multiple playerctl players at runtime; metadata/art/lyrics update immediately via one-shot query on selection
-- Refresh (`r`) — force immediate art retry and re-render
-- Help overlay (`?`) for all keybinds
-- Automatic layout handling on terminal resize
-- Configurable seek interval
-- Status messages (clear cache, no players, etc.) auto-clear after 3 seconds
+### Interface
+
+- Album art (`a`): ASCII/braille/sixel rendering (requires sixel-capable terminal).
+Press `a` to configure available options.
+
+- Help (`?`): help menu with keyboard shortcut mappings shown.
+
+- Refresh (`r`): force immediate art retry and re-render
+
+- Unicode/CJK support: Unicode/CJK support (via `ncurses`,
+depends on active system fonts).
+
+- Fallback/Adaptive UI: Automatic layout handling on terminal resize, fallback UI
+ when no players are detected.
+
+- Status feedback, fallback text where necessary.
+
+### Media
+
+- Get metadata from MPRIS-compliant players (via `playerctl`)
+  - Includes title, artist, album, composer, genre, length, path, art, lyrics
+
+- Media Playback controls:
+  - Play/Pause (`Spacebar`)
+  - Previous/Next(`h/l`)
+  - Seek forward/backward (`j/k`, configure interval with `+/-` or `s`)
+
+- Remote album art caching: Cached art is stored locally under `~/.cache/yams/art/`
+
+- Auto-retry failed downloads: Auto-retries remote art downloads at increasing intervals
+
+- Cache management: Clear art cache (`c`), view cache size
+
+- Player selector (`p`): switch between multiple playerctl players at runtime;
+metadata/art/lyrics update immediately
 
 ## Planned
 
 - Configuration file
+- Being more flexible/modular on directory conventions for platforms like MacOS.
 
 ## Known Issues
 
@@ -41,7 +54,7 @@ exit with `Ctrl + C` instead of `q`.
 
 ## Tested Media Players
 
-- mpv (requires mpv-mpris)
+- mpv (requires `mpv-mpris`)
 - YouTube Web
 - YouTube Music Web
 - Tauon
@@ -53,110 +66,160 @@ Should work with media players detectable by `playerctl` or those that implement
 
 > PRs welcome to add tested media player entries.
 
-## Requirements
-
-### Core Dependencies
-
-Built on the shoulders of giants.
-
-- ncursesw (TUI, wide char support)
-- panelw (ncurses panel library)
-- [playerctl](https://github.com/altdesktop/playerctl)
-- ffmpeg (development libraries: libavformat, libavcodec, libswscale, libavutil)
-- [chafa](https://hpjansson.org/chafa/) >= 1.18.2 (image-to-ASCII/braille/sixel conversion)
-- glib (chafa dependency)
-
-### Dev Dependencies
-
-- Git
-- GNU Make (build)
-- meson (build)
-- ninja (build)
-- cmocka (unit testing; meson falls back to a bundled subproject if not found)
-<!-- - hyperfine (benchmarking) -->
-<!-- - perf (benchmarking) -->
-<!-- - strace -->
-- awk
-
-## Platform support
-
-Linux.
-
-Should work on MacOS/WSL (untested).
-
-## Setup
-
-Clone the repository, ensure you have listed dependencies on your system.
+## Quick Start
 
 ```bash
 git clone --depth=1 https://codeberg.org/bladeacer/yams.git
+cd yams
+
+# Install system-wide
+make install
+yams
+
+# Run with debug flags
+make run
+
+# Run tests
+make test
 ```
 
-- Use `make install` to build a static binary and install to `/usr/local/bin`.
-  Requires static libraries of all dependencies (see below).
+## Nix
 
-- Use `make install-dynamic` to build a dynamically linked binary and install.
+A `flake.nix` is provided for a development shell with all dependencies:
 
-- Use `make release` to build a stripped static binary in `./build/yams`.
-
-- Use `make release-dynamic` to build a stripped dynamically linked binary.
-
-- Use `make run` to build a debug binary in `./build/yams`.
-
-### Installing cmocka (optional, for running tests)
-
-cmocka is used for unit tests. If not installed, meson will automatically
-download and build it as a subproject — no manual setup required.
-
-To install cmocka system-wide:
-
-**Arch Linux:**
 ```bash
-sudo pacman -S cmocka
+nix develop
+make install
+yams
 ```
 
-**Debian/Ubuntu:**
+## Dependencies
+
+### Core
+
+- [ncursesw](https://invisible-island.net/ncurses/): TUI with wide char support
+- [panelw](https://invisible-island.net/ncurses/): ncurses panel library
+- [playerctl](https://github.com/altdesktop/playerctl): MPRIS D-Bus controller
+- [ffmpeg](https://ffmpeg.org/): libavformat/libavcodec/libswscale/libavutil
+(image decoding)
+- [chafa](https://hpjansson.org/chafa/) >= 1.18.2: Image to ASCII/braille/other
+charsets/sixel conversion
+- glib: chafa dependency
+
+### Build
+
+- Git
+- GNU Make
+- [meson](https://mesonbuild.com/)
+- [ninja](https://ninja-build.org/)
+- awk
+
+### Test
+
+- [cmocka](https://cmocka.org/): unit testing (meson falls back to a bundled
+subproject if not found)
+
+---
+
+### Linux
+
+#### Debian/Ubuntu based distros
 ```bash
-sudo apt install libcmocka-dev
+sudo apt install \
+  libncursesw6 libncurses-dev \
+  libpanelw6 libpanel-dev \
+  playerctl \
+  libavformat-dev libavcodec-dev libswscale-dev libavutil-dev \
+  chafa libchafa-dev \
+  libglib2.0-dev \
+  meson ninja-build cmocka
+
+git clone --depth=1 https://codeberg.org/bladeacer/yams.git
+cd yams
+make install
+yams
 ```
 
-**Fedora:**
+#### Arch based distros
 ```bash
-sudo dnf install cmocka-devel
+sudo pacman -S \
+  ncurses \
+  playerctl \
+  ffmpeg \
+  chafa \
+  glib2 \
+  meson ninja cmocka
+
+git clone --depth=1 https://codeberg.org/bladeacer/yams.git
+cd yams
+make install
+yams
 ```
 
-**macOS (Homebrew):**
+#### Fedora based distros
 ```bash
-brew install cmocka
+sudo dnf install \
+  ncurses-devel \
+  playerctl \
+  ffmpeg-devel \
+  chafa-devel \
+  glib2-devel \
+  meson ninja-build cmocka-devel
+
+git clone --depth=1 https://codeberg.org/bladeacer/yams.git
+cd yams
+make install
+yams
 ```
 
-**From source:**
+### macOS
+
+Requires [Homebrew](https://brew.sh/):
+
 ```bash
-git clone https://git.cryptomilk.org/projects/cmocka.git
-cd cmocka
-mkdir build && cd build
-cmake .. -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release
-make
-sudo make install
+brew install \
+  ncurses \
+  playerctl \
+  ffmpeg \
+  chafa \
+  glib \
+  meson ninja cmocka
+
+git clone --depth=1 https://codeberg.org/bladeacer/yams.git
+cd yams
+make install
+yams
 ```
 
-### Binary size (x86_64 Linux)
+> **Note:** macOS support is community-tested: terminal features
+> (sixel, braille art) may vary.
 
-| Command | Binary size | Linkage | Notes |
+## Build targets
+
+| Command | Binary | Linkage | Use case |
 | --- | --- | --- | --- |
-| `make run` | ~ 300 kB | dynamic | Debug build, unstripped |
-| `make release` | ~ 1.5 MB | static | Release, stripped, in `./build/yams` |
-| `make release-dynamic` | ~ 250 kB | dynamic | Release, stripped |
-| `make install` | ~ 1.5 MB | static | Release, stripped, installed |
-| `make install-dynamic` | ~ 250 kB | dynamic | Release, stripped, installed |
+| `make run` | `./build/yams` | dynamic | Development, run in place |
+| `make release` | `./build/yams` | static | Stripped, portable binary |
+| `make release-dynamic` | `./build/yams` | dynamic | Stripped, dynamic |
+| `make install` | `/usr/local/bin/yams` | static | Stripped, System-wide install |
+| `make install-dynamic` | `/usr/local/bin/yams` | dynamic | Stripped, System-wide install |
+| `make test` | N/A | dynamic | Build + run unit tests |
 
-Static builds (`make release`, `make install`) link all dependencies (libchafa,
-ffmpeg, glib, ncursesw, panelw) directly into the binary. Static library
-versions (`.a` files) must be installed on your system:
+Static builds link all dependencies (chafa, ffmpeg, glib, ncursesw, panelw)
+directly into the binary. Static library variants (`.a` files) must be installed.
 
-- Debian/Ubuntu: `apt install libchafa-dev libavformat-dev libavcodec-dev libswscale-dev libavutil-dev libncurses-dev libglib2.0-dev` (some may need `-static` variants)
-- Arch: `pacman -S chafa ffmpeg ncurses glib2` (static libs included in dev packages)
-- Fedora: `dnf install chafa-devel ffmpeg-devel ncurses-devel glib2-devel`
+These should be there if the installation instructions are followed.
+
+### Running tests
+
+```bash
+make test
+# or
+ninja -C build test
+```
+
+cmocka is optional: meson will automatically fetch and build it as a
+subproject if not found system-wide.
 
 ## LLM Usage Disclaimer
 
