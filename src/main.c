@@ -38,6 +38,7 @@ static char **meta_args = NULL;
 static int meta_args_len = 0;
 static long last_metadata_ms = 0;
 
+static bool process_metadata_stream(void);
 static void build_meta_args(const char *fmt);
 static void maintain_subprocesses(const char *fmt, long now);
 
@@ -54,6 +55,59 @@ void handle_winch(int sig) {
     (void)sig;
     resize_pending = true;
     last_resize_time = get_ms();
+}
+
+static bool query_initial_metadata(const char *fmt) {
+    const char *player = get_player_name();
+    int pipe_fds[2];
+    if (pipe(pipe_fds) == -1) return false;
+
+    pid_t pid = fork();
+    if (pid == -1) { close(pipe_fds[0]); close(pipe_fds[1]); return false; }
+    if (pid == 0) {
+        close(pipe_fds[0]);
+        dup2(pipe_fds[1], STDOUT_FILENO);
+        close(pipe_fds[1]);
+        int devnull = open("/dev/null", O_WRONLY);
+        dup2(devnull, STDERR_FILENO); close(devnull);
+
+        char *args[8];
+        int i = 0;
+        args[i++] = "playerctl";
+        if (player[0]) {
+            args[i++] = "--player";
+            args[i++] = (char *)player;
+        }
+        args[i++] = "metadata";
+        args[i++] = "--format";
+        args[i++] = (char *)fmt;
+        args[i] = NULL;
+        execvp("playerctl", args);
+        _exit(1);
+    }
+    close(pipe_fds[1]);
+
+    char buf[65536];
+    ssize_t total = 0;
+    ssize_t n;
+    while ((n = read(pipe_fds[0], buf + total, sizeof(buf) - 1 - (size_t)total)) > 0)
+        total += n;
+    close(pipe_fds[0]);
+    int w;
+    waitpid(pid, &w, 0);
+    if (total <= 0) return false;
+    buf[total] = '\0';
+
+    if (buf_idx + (size_t)total >= BUFFER_SIZE - 1) {
+        buf_idx = 0;
+        poll_buffer[0] = '\0';
+    }
+    memcpy(poll_buffer + buf_idx, buf, (size_t)total);
+    buf_idx += (size_t)total;
+    poll_buffer[buf_idx] = '\0';
+
+    process_metadata_stream();
+    return true;
 }
 
 pid_t spawn_playerctl(char **args, int *out_fd) {
@@ -250,6 +304,8 @@ static void handle_keypress(int ch, long now) {
                 if (metadata_pid > 0) kill(metadata_pid, SIGKILL);
                 if (player_fd != -1) { close(player_fd); player_fd = -1; }
                 metadata_pid = -1;
+                buf_idx = 0;
+                poll_buffer[0] = '\0';
                 clear_metadata();
                 last_metadata_ms = 0;
                 expire_art_debounce();
@@ -260,6 +316,7 @@ static void handle_keypress(int ch, long now) {
                         fcntl(player_fd, F_SETFL,
                               fcntl(player_fd, F_GETFL, 0) | O_NONBLOCK);
                     }
+                    query_initial_metadata(meta_fmt);
                 }
             }
             resize_pending = true;
@@ -555,6 +612,7 @@ int main() {
     if (player_fd != -1)
         fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL, 0) | O_NONBLOCK);
 
+    query_initial_metadata(fmt);
     resize_pending = true;
 
     bool debounce_triggered = false;

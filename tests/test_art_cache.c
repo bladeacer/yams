@@ -9,6 +9,8 @@
 #include <stdbool.h>
 #include <cmocka.h>
 #include "art.h"
+#include "art_manager.h"
+#include "utils.h"
 
 static char *make_temp_dir(void) {
     char *t = strdup("/tmp/yams_cache_test_XXXXXX");
@@ -163,6 +165,32 @@ static void test_cache_version_returns_cached(void **state) {
     free(cache_dir);
 }
 
+static void test_expire_debounce_sets_time_to_zero(void **state) {
+    (void)state;
+    reset_art();
+    assert_true(get_last_metadata_change_time() > 0);
+    expire_art_debounce();
+    assert_int_equal(get_last_metadata_change_time(), 0);
+}
+
+static void test_reset_art_sets_current_time(void **state) {
+    (void)state;
+    expire_art_debounce();
+    assert_int_equal(get_last_metadata_change_time(), 0);
+    reset_art();
+    long t = get_last_metadata_change_time();
+    assert_true(t > 0);
+    assert_true(t <= get_ms());
+}
+
+static void test_debounce_starts_zero_on_expire(void **state) {
+    (void)state;
+    expire_art_debounce();
+    assert_int_equal(get_last_metadata_change_time(), 0);
+    long now = get_ms();
+    assert_true(now - get_last_metadata_change_time() >= 0);
+}
+
 int main(void) {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test_setup_teardown(test_cache_empty_on_init, setup, teardown),
@@ -170,6 +198,9 @@ int main(void) {
         cmocka_unit_test_setup_teardown(test_cache_reports_correct_size, setup, teardown),
         cmocka_unit_test_setup_teardown(test_cache_clear_removes_files, setup, teardown),
         cmocka_unit_test_setup_teardown(test_cache_version_returns_cached, setup, teardown),
+        cmocka_unit_test(test_expire_debounce_sets_time_to_zero),
+        cmocka_unit_test(test_reset_art_sets_current_time),
+        cmocka_unit_test(test_debounce_starts_zero_on_expire),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
