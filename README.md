@@ -11,28 +11,30 @@ Yet another media screensaver.
 
 - CJK/Unicode Support (`ncursesw`)
 - Currently Playing Media (`playerctl`)
-  - Metadata (Media name/title/etc.)
-  - Album art rendered as ASCII/braille/sixel art (24 rendering modes)
-  - Lyrics (if available)
-  - Play/Pause
-  - Next/Previous
-  - Seek Interval (go forward/backward by x seconds, can set amount)
+  - Metadata (title, artist, album, composer, genre, length, path, lyrics)
+  - Album art rendered as ASCII/braille/sixel (24 rendering modes)
+  - Lyrics (if available via MPRIS `xesam:asText`)
+  - Play/Pause, Next/Previous, Seek forward/backward
 - Art rendering modes (press `a`):
   - 23 chafa symbol sets: ascii, braille, block, dot, border, diagonal, half, quad, sextant, technical, geometric, latin, digit, alpha, stipple, solid, inverted, narrow, wide, ambiguous, legacy, extra, all
   - 1 pixel mode: sixel (requires sixel-capable terminal)
-
-- Help Menu for keybinds
-- Refresh Button (if auto-refresh/polling does not work)
-- Layout handling when resizing window
+- Remote album art caching — downloaded art is stored locally under `~/.cache/yams/art/` for reuse without re-downloading
+- Auto-retry for failed art downloads — retries at 1s/2s/5s/10s/30s intervals with visual feedback
+- Cache management — clear art cache (`c`) and view cache size in the help bar
+- Debounced art re-rendering (configurable interval, default 200ms)
+- Player health monitoring — automatic fallback when the active player disappears, using event-driven `waitpid` detection with 5s stale-data polling fallback
+- Player selector (`p`) — switch between multiple playerctl players at runtime
+- Refresh (`r`) — force immediate art retry and re-render
+- Help overlay (`?`) for all keybinds
+- Automatic layout handling on terminal resize
+- Configurable seek interval
+- Status messages (clear cache, no players, etc.) auto-clear after 3 seconds
 
 ## Planned
 
 - Configuration file
 
 ## Known Issues
-
-Needs programme restart.
-- Fallback mode check not triggered by refresh hotkey.
 
 When opened in tmux, switching focus away and then back means programme can only
 exit with `Ctrl + C` instead of `q`.

@@ -17,6 +17,7 @@
 #include "metadata.h"
 #include "utils.h"
 #include "art.h"
+#include "art_manager.h"
 #include "debug.h"
 #include "config.h"
 
@@ -33,6 +34,9 @@ static bool help_active = false;
 static long last_player_fail_ms = 0;
 long last_draw_time = 0;
 static const char *meta_fmt = NULL;
+static char **meta_args = NULL;
+static int meta_args_len = 0;
+static long last_metadata_ms = 0;
 
 static void build_meta_args(const char *fmt);
 static void maintain_subprocesses(const char *fmt, long now);
@@ -247,8 +251,16 @@ static void handle_keypress(int ch, long now) {
                 if (player_fd != -1) { close(player_fd); player_fd = -1; }
                 metadata_pid = -1;
                 clear_metadata();
-                if (meta_fmt) build_meta_args(meta_fmt);
-                last_player_fail_ms = 0;
+                last_metadata_ms = 0;
+                expire_art_debounce();
+                if (meta_fmt) {
+                    build_meta_args(meta_fmt);
+                    metadata_pid = spawn_playerctl(meta_args, &player_fd);
+                    if (player_fd != -1) {
+                        fcntl(player_fd, F_SETFL,
+                              fcntl(player_fd, F_GETFL, 0) | O_NONBLOCK);
+                    }
+                }
             }
             resize_pending = true;
             break;
@@ -288,6 +300,7 @@ static void handle_keypress(int ch, long now) {
         case 'r':
             DBG("Manual refresh requested");
             reset_art();
+            expire_art_debounce();
             resize_pending = true;
             last_resize_time = now - 1000;
             break;
@@ -388,8 +401,6 @@ void show_help_overlay(long now) {
     help_active = false;
 }
 
-static long last_metadata_ms = 0;
-
 static bool has_any_playerctl_player(void) {
     int pipe_fds[2];
     if (pipe(pipe_fds) == -1) return true;
@@ -455,9 +466,6 @@ static void handle_player_data() {
         resize_pending = true;
     }
 }
-
-static char **meta_args = NULL;
-static int meta_args_len = 0;
 
 static void build_meta_args(const char *fmt) {
     const char *player = get_player_name();

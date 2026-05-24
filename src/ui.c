@@ -23,10 +23,12 @@
 bool resize_pending = false;
 
 static char status_msg[256] = {0};
+static long status_msg_time = 0;
 
 void show_status_msg(const char *msg) {
     strncpy(status_msg, msg, sizeof(status_msg) - 1);
     status_msg[sizeof(status_msg) - 1] = '\0';
+    status_msg_time = get_ms();
 }
 
 void draw_dashboard() {
@@ -102,11 +104,15 @@ void draw_dashboard() {
     }
 
     if (status_msg[0]) {
-        int my, mx;
-        getmaxyx(stdscr, my, mx);
-        mvwprintw(stdscr, my - 1, 1, "%-*s", mx - 2, status_msg);
-        wnoutrefresh(stdscr);
-        status_msg[0] = '\0';
+        long now = get_ms();
+        if (now - status_msg_time > 3000) {
+            status_msg[0] = '\0';
+        } else {
+            int my, mx;
+            getmaxyx(stdscr, my, mx);
+            mvwprintw(stdscr, my - 1, 1, "%-*s", mx - 2, status_msg);
+            wnoutrefresh(stdscr);
+        }
     }
 
     doupdate();

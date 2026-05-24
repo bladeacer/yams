@@ -45,6 +45,10 @@ bool is_retry_pending(void) {
     return retry_src[0] != '\0';
 }
 
+void expire_art_debounce(void) {
+    last_metadata_change_time = 0;
+}
+
 void reset_art() {
     free(art_buffer);
     art_buffer = NULL;
