@@ -160,30 +160,32 @@ void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     int mid_x = max_x / 2;
     werase(win);
 
-    wattron(win, COLOR_PAIR(4));
-    const char* logo[] = {
-        "    ######",
-        "  ##  ##  ##",
-        " ##   ##   ##  yams",
-        " ##   ##   ##",
-        "  ##  ##  ##",
-        "    ######",
-    };
-    for (int i = 0; i < 6; i++) {
-        mvwprintw(win, mid_y - 6 + i, mid_x - 9, "%s", logo[i]);
+    if (max_y >= 14 && max_x >= 40) {
+        wattron(win, COLOR_PAIR(4));
+        const char* logo[] = {
+            "    ######",
+            "  ##  ##  ##",
+            " ##   ##   ##  yams",
+            " ##   ##   ##",
+            "  ##  ##  ##",
+            "    ######",
+        };
+        for (int i = 0; i < 6; i++) {
+            mvwprintw(win, mid_y - 6 + i, mid_x - 9, "%s", logo[i]);
+        }
+        wattroff(win, COLOR_PAIR(4));
+        const char* msg2 = "Awaiting Player Input...";
+        mvwprintw(win, mid_y + 1, mid_x - (strlen(msg2)/2), "%s", msg2);
+        wattroff(win, A_BOLD);
+
+        wattron(win, A_DIM);
+        const char* msg1 = "Yet Another Media Screensaver";
+        mvwprintw(win, mid_y + 2, mid_x - (strlen(msg1)/2), "%s", msg1);
+        const char* repo = "https://codeberg.org/bladeacer/yams";
+        mvwprintw(win, mid_y + 4, mid_x - (strlen(repo)/2), "%s", repo);
+        wattroff(win, A_DIM);
+
+        draw_help_text(win, mid_y + 6, mid_x - 28);
     }
-    wattroff(win, COLOR_PAIR(4));
-    const char* msg2 = "Awaiting Player Input...";
-    mvwprintw(win, mid_y + 1, mid_x - (strlen(msg2)/2), "%s", msg2);
-    wattroff(win, A_BOLD);
-
-    wattron(win, A_DIM);
-    const char* msg1 = "Yet Another Media Screensaver";
-    mvwprintw(win, mid_y + 2, mid_x - (strlen(msg1)/2), "%s", msg1);
-    const char* repo = "https://codeberg.org/bladeacer/yams";
-    mvwprintw(win, mid_y + 4, mid_x - (strlen(repo)/2), "%s", repo);
-    wattroff(win, A_DIM);
-
-    draw_help_text(win, mid_y + 6, mid_x - 28);
     wnoutrefresh(win);
 }

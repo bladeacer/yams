@@ -50,29 +50,42 @@ void recreate_layout() {
 
     if (geo.horizontal) {
         geo.art_w = (safe_w * 0.4 > 80) ? 80 : (int)(safe_w * 0.4);
+        if (geo.art_w < 10) geo.art_w = 10;
         geo.art_h = (int)(safe_h * 0.6);
+        if (geo.art_h < 4) geo.art_h = 4;
         int split_x = geo.art_w + 4;
+        if (split_x >= safe_w) split_x = safe_w - 1;
         
-        // Metadata subwindow
-        meta_sub = derwin(main_win, safe_h - geo.art_h - 2, split_x - 2, geo.art_h + 1, 1);
-        // Lyrics subwindow
-        lyr_sub = derwin(main_win, safe_h - 1, safe_w - split_x - 1, 0, split_x + 1);
+        int meta_h = safe_h - geo.art_h - 2;
+        if (meta_h < 1) meta_h = 1;
+        int meta_w = split_x - 2;
+        if (meta_w < 4) meta_w = 4;
+        meta_sub = derwin(main_win, meta_h, meta_w, geo.art_h + 1, 1);
+        
+        int lyr_w = safe_w - split_x - 1;
+        if (lyr_w < 4) { lyr_w = 4; split_x = safe_w - lyr_w - 1; }
+        lyr_sub = derwin(main_win, safe_h - 1, lyr_w, 0, split_x + 1);
     } else {
         geo.art_w = (safe_w - 4 > 50) ? 50 : safe_w - 4;
+        if (geo.art_w < 10) geo.art_w = 10;
         geo.art_h = (int)(safe_h * 0.4);
+        if (geo.art_h < 4) geo.art_h = 4;
         int meta_h = 11;
+        if (geo.art_h + meta_h + 2 > safe_h)
+            meta_h = safe_h - geo.art_h - 2;
+        if (meta_h < 1) meta_h = 1;
         
-        // Metadata subwindow
         meta_sub = derwin(main_win, meta_h, safe_w - 2, geo.art_h + 1, 1);
         
         int lyr_y = geo.art_h + meta_h + 2;
         int lyr_h = safe_h - lyr_y;
-        if (lyr_h > 0) {
+        if (lyr_h > 3) {
             lyr_sub = derwin(main_win, lyr_h, safe_w - 2, lyr_y, 1);
         }
     }
 
     // Reset art tracking so the next draw_dashboard triggers a fresh render
     reset_art();
+    expire_art_debounce();
     resize_pending = false;
 }
