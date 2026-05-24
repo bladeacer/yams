@@ -298,7 +298,9 @@ static void handle_keypress(int ch, long now) {
             show_art_mode_selector();
             break;
         case 'p': {
-            const char *old_player = get_player_name();
+            char old_player[64];
+            strncpy(old_player, get_player_name(), sizeof(old_player) - 1);
+            old_player[sizeof(old_player) - 1] = '\0';
             show_player_selector();
             if (strcmp(get_player_name(), old_player) != 0) {
                 if (metadata_pid > 0) kill(metadata_pid, SIGKILL);

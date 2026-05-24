@@ -68,6 +68,44 @@ static void test_player_name_null_resets(void **state) {
     assert_string_equal(get_player_name(), "");
 }
 
+static void test_player_switch_auto_to_specific(void **state) {
+    (void)state;
+    set_player_name("");
+    assert_string_equal(get_player_name(), "");
+    set_player_name("firefox");
+    assert_string_equal(get_player_name(), "firefox");
+}
+
+static void test_player_switch_specific_to_auto(void **state) {
+    (void)state;
+    set_player_name("tauon");
+    assert_string_equal(get_player_name(), "tauon");
+    set_player_name("");
+    assert_string_equal(get_player_name(), "");
+}
+
+static void test_player_switch_between_specific(void **state) {
+    (void)state;
+    set_player_name("spotify");
+    assert_string_equal(get_player_name(), "spotify");
+    set_player_name("firefox");
+    assert_string_equal(get_player_name(), "firefox");
+    set_player_name("tauon");
+    assert_string_equal(get_player_name(), "tauon");
+}
+
+static void test_player_name_buffer_truncated(void **state) {
+    (void)state;
+    char long_name[128];
+    memset(long_name, 'A', sizeof(long_name) - 1);
+    long_name[sizeof(long_name) - 1] = '\0';
+    set_player_name(long_name);
+    const char *result = get_player_name();
+    assert_int_equal(strlen(result), 63);
+    set_player_name("");
+    assert_string_equal(get_player_name(), "");
+}
+
 int main(void) {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_art_debounce_default),
@@ -80,6 +118,10 @@ int main(void) {
         cmocka_unit_test(test_player_name_set_get),
         cmocka_unit_test(test_player_name_reset_to_auto),
         cmocka_unit_test(test_player_name_null_resets),
+        cmocka_unit_test(test_player_switch_auto_to_specific),
+        cmocka_unit_test(test_player_switch_specific_to_auto),
+        cmocka_unit_test(test_player_switch_between_specific),
+        cmocka_unit_test(test_player_name_buffer_truncated),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

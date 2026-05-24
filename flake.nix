@@ -29,6 +29,8 @@
             ffmpeg
             hyperfine
             chafa
+            glib
+            cmocka
           ];
         };
       }

@@ -22,8 +22,8 @@ Yet another media screensaver.
 - Auto-retry for failed art downloads — retries at 1s/2s/5s/10s/30s intervals with visual feedback
 - Cache management — clear art cache (`c`) and view cache size in the help bar
 - Debounced art re-rendering (configurable interval, default 200ms)
-- Player health monitoring — automatic fallback when the active player disappears, using event-driven `waitpid` detection with 5s stale-data polling fallback
-- Player selector (`p`) — switch between multiple playerctl players at runtime
+- Player health monitoring — automatic fallback when the active player disappears, using event-driven `waitpid` detection with 2s stale-data polling fallback
+- Player selector (`p`) — switch between multiple playerctl players at runtime; metadata/art/lyrics update immediately via one-shot query on selection
 - Refresh (`r`) — force immediate art retry and re-render
 - Help overlay (`?`) for all keybinds
 - Automatic layout handling on terminal resize

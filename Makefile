@@ -63,9 +63,11 @@ test: ## Build and run unit tests
 	fi
 	@ninja -C build
 	@echo "$(GREEN)Running unit tests...$(RESET)"
-	@for t in build/tests/test_metadata build/tests/test_utils build/tests/test_config build/tests/test_art; do \
+	@for t in build/tests/test_metadata build/tests/test_utils \
+	         build/tests/test_config build/tests/test_art build/tests/test_art_cache; do \
 		if [ -x "$$t" ]; then \
-			"$$t" 2>&1 | grep -E '^\[.*(RUN|OK|FAILED|========)' | sed 's/^\[[[:space:]]*/[/'; \
+			"$$t"; \
+			echo; \
 		fi; \
 	done
 
