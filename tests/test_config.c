@@ -41,6 +41,33 @@ static void test_art_debounce_edge_max(void **state) {
     assert_int_equal(get_art_debounce(), 5000);
 }
 
+static void test_player_name_default_empty(void **state) {
+    (void)state;
+    assert_string_equal(get_player_name(), "");
+}
+
+static void test_player_name_set_get(void **state) {
+    (void)state;
+    set_player_name("spotify");
+    assert_string_equal(get_player_name(), "spotify");
+    set_player_name("mpd");
+    assert_string_equal(get_player_name(), "mpd");
+}
+
+static void test_player_name_reset_to_auto(void **state) {
+    (void)state;
+    set_player_name("spotify");
+    set_player_name("");
+    assert_string_equal(get_player_name(), "");
+}
+
+static void test_player_name_null_resets(void **state) {
+    (void)state;
+    set_player_name("spotify");
+    set_player_name(NULL);
+    assert_string_equal(get_player_name(), "");
+}
+
 int main(void) {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_art_debounce_default),
@@ -49,6 +76,10 @@ int main(void) {
         cmocka_unit_test(test_art_debounce_clamp_high),
         cmocka_unit_test(test_art_debounce_edge_zero),
         cmocka_unit_test(test_art_debounce_edge_max),
+        cmocka_unit_test(test_player_name_default_empty),
+        cmocka_unit_test(test_player_name_set_get),
+        cmocka_unit_test(test_player_name_reset_to_auto),
+        cmocka_unit_test(test_player_name_null_resets),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

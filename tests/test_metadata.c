@@ -331,6 +331,61 @@ static void test_snapshot_full_length(void **state) {
     assert_int_equal(snap_title[511], '\0');
 }
 
+static void test_player_active_false_when_empty(void **state) {
+    (void)state;
+    clear_metadata();
+    bool active = (m.status[0] != '\0' && m.status[0] != 'S');
+    assert_false(active);
+}
+
+static void test_player_active_false_when_stopped(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "STATUS|Stopped";
+    parse_block(input);
+    bool active = (m.status[0] != '\0' && m.status[0] != 'S');
+    assert_false(active);
+}
+
+static void test_player_active_true_when_playing(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "STATUS|Playing";
+    parse_block(input);
+    bool active = (m.status[0] != '\0' && m.status[0] != 'S');
+    assert_true(active);
+}
+
+static void test_player_active_true_when_paused(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "STATUS|Paused";
+    parse_block(input);
+    bool active = (m.status[0] != '\0' && m.status[0] != 'S');
+    assert_true(active);
+}
+
+static void test_full_ui_fallback_transition_cycle(void **state) {
+    (void)state;
+    clear_metadata();
+    assert_string_equal(m.status, "");
+    assert_false(m.status[0] != '\0' && m.status[0] != 'S');
+
+    char play[] = "TITLE|Song\tARTIST|Artist\tSTATUS|Playing";
+    parse_block(play);
+    assert_string_equal(m.status, "Playing");
+    assert_true(m.status[0] != '\0' && m.status[0] != 'S');
+
+    char stop[] = "STATUS|Stopped";
+    parse_block(stop);
+    assert_string_equal(m.status, "Stopped");
+    assert_false(m.status[0] != '\0' && m.status[0] != 'S');
+
+    clear_metadata();
+    assert_string_equal(m.status, "");
+    assert_false(m.status[0] != '\0' && m.status[0] != 'S');
+}
+
 int main(void) {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_clear_metadata),
@@ -358,6 +413,11 @@ int main(void) {
         cmocka_unit_test(test_snapshot_copy),
         cmocka_unit_test(test_snapshot_empty_fields),
         cmocka_unit_test(test_snapshot_full_length),
+        cmocka_unit_test(test_player_active_false_when_empty),
+        cmocka_unit_test(test_player_active_false_when_stopped),
+        cmocka_unit_test(test_player_active_true_when_playing),
+        cmocka_unit_test(test_player_active_true_when_paused),
+        cmocka_unit_test(test_full_ui_fallback_transition_cycle),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

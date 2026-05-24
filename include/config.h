@@ -18,4 +18,7 @@ extern const ArtModeEntry art_modes[ART_MODE_COUNT];
 void set_art_debounce(int ms);
 int get_art_debounce(void);
 
+void set_player_name(const char *name);
+const char *get_player_name(void);
+
 #endif

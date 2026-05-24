@@ -12,6 +12,7 @@
 #include <sys/prctl.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include <signal.h>
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
@@ -31,6 +32,10 @@ static pid_t ctrl_pid = -1;
 static bool help_active = false;
 static long last_player_fail_ms = 0;
 long last_draw_time = 0;
+static const char *meta_fmt = NULL;
+
+static void build_meta_args(const char *fmt);
+static void maintain_subprocesses(const char *fmt, long now);
 
 void handle_exit(int sig) {
     DBG("handle_exit called with signal %d", sig);
@@ -85,7 +90,17 @@ void run_player_cmd(const char *action, const char *param) {
         dup2(devnull, STDERR_FILENO);
         close(devnull);
 
-        char *args[4] = {"playerctl", (char *)action, (char *)param, NULL};
+        const char *player = get_player_name();
+        char *args[6];
+        int i = 0;
+        args[i++] = "playerctl";
+        if (player[0]) {
+            args[i++] = "--player";
+            args[i++] = (char *)player;
+        }
+        args[i++] = (char *)action;
+        if (param) args[i++] = (char *)param;
+        args[i] = NULL;
         execvp("playerctl", args);
         _exit(1);
     } else if (pid > 0) {
@@ -224,6 +239,20 @@ static void handle_keypress(int ch, long now) {
         case 'a':
             show_art_mode_selector();
             break;
+        case 'p': {
+            const char *old_player = get_player_name();
+            show_player_selector();
+            if (strcmp(get_player_name(), old_player) != 0) {
+                if (metadata_pid > 0) kill(metadata_pid, SIGKILL);
+                if (player_fd != -1) { close(player_fd); player_fd = -1; }
+                metadata_pid = -1;
+                clear_metadata();
+                if (meta_fmt) build_meta_args(meta_fmt);
+                last_player_fail_ms = 0;
+            }
+            resize_pending = true;
+            break;
+        }
         case 'c': {
             char *info = get_cache_info();
             char *msg = clear_art_cache();
@@ -321,6 +350,7 @@ void show_help_overlay(long now) {
     HELP_L("-/+",   "Adjust Seek Interval");
     HELP_L("s",     "Set Seek Interval");
     HELP_L("a",     "Art Mode Selector");
+    HELP_L("p",     "Player Selector");
     HELP_L("ESC/?", "Close this menu");
 
     wattron(help_win, A_DIM);
@@ -358,6 +388,36 @@ void show_help_overlay(long now) {
     help_active = false;
 }
 
+static long last_metadata_ms = 0;
+
+static bool has_any_playerctl_player(void) {
+    int pipe_fds[2];
+    if (pipe(pipe_fds) == -1) return true;
+    pid_t pid = fork();
+    if (pid == -1) { close(pipe_fds[0]); close(pipe_fds[1]); return true; }
+    if (pid == 0) {
+        dup2(pipe_fds[1], STDOUT_FILENO);
+        close(pipe_fds[0]); close(pipe_fds[1]);
+        int devnull = open("/dev/null", O_WRONLY);
+        dup2(devnull, STDERR_FILENO); close(devnull);
+        char *args[] = {"playerctl", "-l", NULL};
+        execvp("playerctl", args);
+        _exit(1);
+    }
+    close(pipe_fds[1]);
+    char buf[128];
+    ssize_t n = read(pipe_fds[0], buf, sizeof(buf) - 1);
+    close(pipe_fds[0]);
+    int w;
+    waitpid(pid, &w, 0);
+    if (n <= 0) return false;
+    buf[n] = '\0';
+    for (ssize_t i = 0; i < n; i++) {
+        if (buf[i] != '\n' && buf[i] != '\0') return true;
+    }
+    return false;
+}
+
 static void handle_player_data() {
     char chunk[16384];
     ssize_t n;
@@ -382,6 +442,7 @@ static void handle_player_data() {
     }
 
     if (data_read) {
+        last_metadata_ms = get_ms();
         if (process_metadata_stream()) {
             resize_pending = true;
         }
@@ -395,7 +456,32 @@ static void handle_player_data() {
     }
 }
 
-static void maintain_subprocesses(char **args, long now) {
+static char **meta_args = NULL;
+static int meta_args_len = 0;
+
+static void build_meta_args(const char *fmt) {
+    const char *player = get_player_name();
+    int base = 0;
+    if (player[0]) base = 2;
+    int total = 5 + base + 1;
+    if (meta_args_len < total) {
+        meta_args = realloc(meta_args, sizeof(char*) * (size_t)total);
+        meta_args_len = total;
+    }
+    int i = 0;
+    meta_args[i++] = "playerctl";
+    if (player[0]) {
+        meta_args[i++] = "--player";
+        meta_args[i++] = (char *)player;
+    }
+    meta_args[i++] = "metadata";
+    meta_args[i++] = "--follow";
+    meta_args[i++] = "--format";
+    meta_args[i++] = (char *)fmt;
+    meta_args[i] = NULL;
+}
+
+static void maintain_subprocesses(const char *fmt, long now) {
     static long last_check = 0;
 
     if (ctrl_pid > 0 && (now - last_check > 500)) {
@@ -403,9 +489,34 @@ static void maintain_subprocesses(char **args, long now) {
         last_check = now;
     }
 
+    if (player_fd != -1 && metadata_pid > 0) {
+        int wstatus;
+        pid_t ret = waitpid(metadata_pid, &wstatus, WNOHANG);
+        if (ret == metadata_pid) {
+            DBG("metadata_pid exited, stopping subprocess");
+            close(player_fd);
+            player_fd = -1;
+            metadata_pid = -1;
+            clear_metadata();
+            resize_pending = true;
+        } else if (last_metadata_ms > 0 && (now - last_metadata_ms) > 2000) {
+            if (!has_any_playerctl_player()) {
+                DBG("no playerctl players found, forcing cleanup");
+                kill(metadata_pid, SIGKILL);
+                close(player_fd);
+                player_fd = -1;
+                metadata_pid = -1;
+                last_metadata_ms = 0;
+                clear_metadata();
+                resize_pending = true;
+            }
+        }
+    }
+
     if (player_fd == -1 && (now - last_player_fail_ms > 2000)) {
         DBG("Attempting playerctl restart...");
-        metadata_pid = spawn_playerctl(args, &player_fd);
+        build_meta_args(fmt);
+        metadata_pid = spawn_playerctl(meta_args, &player_fd);
         if (player_fd != -1) {
             fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL) | O_NONBLOCK);
         }
@@ -428,8 +539,9 @@ int main() {
         "ARTIST|{{xesam:artist}}	ALBUM|{{xesam:album}}	PATH|{{xesam:url}}	"
         "LENGTH|{{mpris:length}}	GENRE|{{xesam:genre}}	COMPOSER|{{xesam:composer}}	"
         "ART|{{mpris:artUrl}}	LYRICS|{{xesam:asText}}	[[END]]";
+    meta_fmt = fmt;
 
-    char *meta_args[] = {"playerctl", "metadata", "--follow", "--format", (char*)fmt, NULL};
+    build_meta_args(fmt);
     metadata_pid = spawn_playerctl(meta_args, &player_fd);
     
     if (player_fd != -1)
@@ -460,7 +572,7 @@ int main() {
             if (player_fd > max_fd) max_fd = player_fd;
         }
 
-        maintain_subprocesses(meta_args, now);
+        maintain_subprocesses(fmt, now);
 
         struct timeval tv;
 

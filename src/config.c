@@ -40,3 +40,15 @@ void set_art_debounce(int ms) {
 int get_art_debounce(void) {
     return art_debounce_ms;
 }
+
+static char selected_player[64] = {0};
+
+void set_player_name(const char *name) {
+    if (!name) { selected_player[0] = '\0'; return; }
+    strncpy(selected_player, name, sizeof(selected_player) - 1);
+    selected_player[sizeof(selected_player) - 1] = '\0';
+}
+
+const char *get_player_name(void) {
+    return selected_player;
+}

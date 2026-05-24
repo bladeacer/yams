@@ -63,7 +63,7 @@ void draw_help_text(WINDOW *win, int y, int x) {
 
     wattron(win, A_BOLD);
     draw_item(win, "q", "Quit", &cur_y, &cur_x, x, max_h, max_w);
-    draw_item(win, "r", "Retry Art", &cur_y, &cur_x, x, max_h, max_w);
+    draw_item(win, "r", "Refresh", &cur_y, &cur_x, x, max_h, max_w);
 
     {
         static char clbl[64] = "";
@@ -88,6 +88,11 @@ void draw_help_text(WINDOW *win, int y, int x) {
 
     snprintf(seek_str, sizeof(seek_str), "Art: %s", art_modes[get_art_mode()].name);
     draw_item(win, "a", seek_str, &cur_y, &cur_x, x, max_h, max_w);
+
+    const char *pname = get_player_name();
+    snprintf(seek_str, sizeof(seek_str), "Player: %s",
+             pname[0] ? pname : "auto");
+    draw_item(win, "p", seek_str, &cur_y, &cur_x, x, max_h, max_w);
     wattroff(win, A_BOLD);
 }
 

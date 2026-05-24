@@ -3,7 +3,12 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <ctype.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <fcntl.h>
 
 #include "ui.h"
 #include "layout.h"
@@ -58,6 +63,10 @@ void draw_dashboard() {
         werase(main_win);
         if (!art_update_requested)
             reset_art();
+    } else if (!player_active && was_active) {
+        clear_art_area();
+        werase(main_win);
+        reset_art();
     }
 
     bool identity_changed = (strcmp(snap_title, last_known_title) != 0 ||
@@ -84,16 +93,12 @@ void draw_dashboard() {
 
     update_panels();
 
-    if (player_active && !was_active && curscr) {
-        int mh = getmaxy(main_win);
-        for (int r = 0; r < mh; r++)
-            wredrawln(curscr, 1 + r, 1);
-    }
-
-    if (!player_active) {
-        int art_top = 2;
-        for (int r = 0; r < geo.art_h && art_top + r <= LINES; r++)
-            wredrawln(curscr, art_top - 1 + r, 1);
+    if ((player_active && !was_active) || (!player_active && was_active)) {
+        if (curscr) {
+            int mh = getmaxy(main_win);
+            for (int r = 0; r < mh; r++)
+                wredrawln(curscr, 1 + r, 1);
+        }
     }
 
     if (status_msg[0]) {
@@ -317,6 +322,154 @@ void show_art_mode_selector(void) {
     del_panel(mpanel);
     delwin(mwin);
     curs_set(0);
+
+    reset_art();
+    resize_pending = true;
+}
+
+static char **fetch_player_list(int *count) {
+    *count = 0;
+    int pipe_fds[2];
+    if (pipe(pipe_fds) == -1) return NULL;
+
+    pid_t pid = fork();
+    if (pid == -1) { close(pipe_fds[0]); close(pipe_fds[1]); return NULL; }
+    if (pid == 0) {
+        dup2(pipe_fds[1], STDOUT_FILENO);
+        close(pipe_fds[0]);
+        close(pipe_fds[1]);
+        int devnull = open("/dev/null", O_WRONLY);
+        dup2(devnull, STDERR_FILENO);
+        close(devnull);
+        char *args[] = {"playerctl", "-l", NULL};
+        execvp("playerctl", args);
+        _exit(1);
+    }
+    close(pipe_fds[1]);
+
+    char buf[4096];
+    ssize_t total = 0;
+    ssize_t n;
+    while ((n = read(pipe_fds[0], buf + total, sizeof(buf) - 1 - (size_t)total)) > 0)
+        total += n;
+    close(pipe_fds[0]);
+    int w;
+    waitpid(pid, &w, 0);
+    if (total <= 0) return NULL;
+    buf[total] = '\0';
+
+    char **list = NULL;
+    int cap = 0;
+    char *line = strtok(buf, "\n");
+    while (line) {
+        if (line[0]) {
+            if (*count >= cap) {
+                cap = cap ? cap * 2 : 8;
+                list = realloc(list, sizeof(char*) * (size_t)cap);
+            }
+            list[*count] = strdup(line);
+            (*count)++;
+        }
+        line = strtok(NULL, "\n");
+    }
+    return list;
+}
+
+void show_player_selector(void) {
+    int count = 0;
+    char **players = fetch_player_list(&count);
+    if (!players) {
+        show_status_msg("No players available");
+        return;
+    }
+
+    const char *current = get_player_name();
+    int current_idx = (current[0] == '\0') ? 0 : -1;
+    if (current_idx == -1) {
+        for (int i = 0; i < count; i++) {
+            if (strcmp(players[i], current) == 0) { current_idx = i + 1; break; }
+        }
+        if (current_idx == -1) current_idx = 0;
+    }
+
+    int total_items = count + 1;
+    char **labels = malloc(sizeof(char*) * (size_t)total_items);
+    labels[0] = strdup("Auto (last active)");
+    for (int i = 0; i < count; i++)
+        labels[i + 1] = strdup(players[i]);
+
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    int vis_rows = total_items < 10 ? total_items : 10;
+    int w = 40;
+    int h = vis_rows + 6;
+    if (h > max_y - 2) h = max_y - 2;
+    int sy = (max_y - h) / 2;
+    int sx = (max_x - w) / 2;
+
+    WINDOW *pwin = newwin(h, w, sy, sx);
+    PANEL *ppanel = new_panel(pwin);
+    wbkgd(pwin, COLOR_PAIR(3));
+    keypad(pwin, TRUE);
+    nodelay(pwin, FALSE);
+    curs_set(1);
+
+    int scroll = 0;
+    int sel = current_idx;
+    if (sel < 0) sel = 0;
+
+    while (1) {
+        if (sel < scroll) scroll = sel;
+        if (sel >= scroll + vis_rows) scroll = sel - vis_rows + 1;
+
+        werase(pwin);
+        box(pwin, 0, 0);
+        mvwprintw(pwin, 0, 2, " Select Player ");
+
+        for (int i = scroll; i < total_items && i - scroll < vis_rows; i++) {
+            int line = 1 + i - scroll;
+            if (i == sel) {
+                wattron(pwin, A_REVERSE);
+                mvwprintw(pwin, line, 2, "%s", labels[i]);
+                int pad = w - 4 - (int)strlen(labels[i]);
+                if (pad > 0) mvwprintw(pwin, line, 2 + (int)strlen(labels[i]), "%*s", pad, "");
+                wattroff(pwin, A_REVERSE);
+            } else {
+                mvwprintw(pwin, line, 2, "%s", labels[i]);
+            }
+        }
+
+        mvwprintw(pwin, h - 4, 2, "arrows/vim  scroll  ENTER select");
+        mvwprintw(pwin, h - 3, 2, "ESC  quit");
+
+        update_panels();
+        doupdate();
+
+        int ch = wgetch(pwin);
+        if (ch == 27 || ch == 'q') break;
+        if (ch == '\n' || ch == KEY_ENTER || ch == '\r') {
+            if (sel == 0) {
+                set_player_name("");
+            } else {
+                set_player_name(players[sel - 1]);
+            }
+            break;
+        }
+        if ((ch == KEY_UP || ch == 'k') && sel > 0) sel--;
+        if ((ch == KEY_DOWN || ch == 'j') && sel < total_items - 1) sel++;
+        if (ch == KEY_PPAGE) sel = sel - vis_rows > 0 ? sel - vis_rows : 0;
+        if (ch == KEY_NPAGE) sel = sel + vis_rows < total_items - 1 ? sel + vis_rows : total_items - 1;
+    }
+
+    del_panel(ppanel);
+    delwin(pwin);
+    curs_set(0);
+
+    for (int i = 0; i < count; i++) free(players[i]);
+    free(players);
+    for (int i = 0; i < total_items; i++) free(labels[i]);
+    free(labels);
 
     reset_art();
     resize_pending = true;
