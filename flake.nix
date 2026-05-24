@@ -32,6 +32,7 @@
             glib
             cmocka
             hyperfine
+            valgrind
           ];
         };
       }

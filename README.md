@@ -133,15 +133,27 @@ make run              # debug build, run in place
 make test             # build + run unit tests
 make release          # stripped static binary
 make build            # compile only (no run, no install)
+make valgrind         # run under valgrind for memory leak detection
 ninja -C build test   # run tests after build (cmocka default output)
 ```
+
+### Test (dev dependencies)
+
+- [cmocka](https://cmocka.org/) (meson falls back to a bundled subproject if not found)
+- valgrind
+
+> Development utilizes Valgrind for memory profiling.
+> This tool is required only for testing and is not a runtime dependency
+> or a bundled component of the software.
 
 cmocka is optional; meson will fetch and build it as a subproject if not found system-wide.
 
 ## Known Issues
 
-When opened in tmux, switching focus away and back means the program can only
+- When opened in tmux, switching focus away and back means the program can only
 exit with Ctrl+C instead of q.
+
+- Rendered Sixel art feels small at larger screen resolution
 
 ## Tested Media Players
 

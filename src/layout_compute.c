@@ -12,7 +12,7 @@ void compute_layout(int max_y, int max_x, Geometry *out) {
     if (safe_h < 4) safe_h = 4;
 
     if (out->horizontal) {
-        out->art_w = (safe_w * 0.4 > 80) ? 80 : (int)(safe_w * 0.4);
+        out->art_w = (safe_w * 0.4 > 54) ? 54 : (int)(safe_w * 0.4);
         if (out->art_w < 10) out->art_w = 10;
         out->art_h = (int)(safe_h * 0.6);
         if (out->art_h < 4) out->art_h = 4;

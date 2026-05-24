@@ -65,6 +65,9 @@ test: ## Build and run unit tests (via ninja test, cmocka native output)
 	@echo "$(GREEN)Running unit tests...$(RESET)"
 	@ninja -C build test
 
+valgrind: build ## Run valgrind leak check on yams (report saved to valgrind_report.txt)
+	valgrind --leak-check=full --log-file=valgrind_report.txt ./build/yams
+
 release: clean ## Build a stripped static release binary without debug/tests
 	@meson setup build \
 		--buildtype=release \
@@ -123,5 +126,10 @@ install-dynamic: ## Build dynamically-linked release binary and install to syste
 	@echo "$(GREEN)Installing to system...$(RESET)"
 	@sudo ninja -C build install
 
-uninstall: ## Remove yams from the system
-	@sudo rm -f /usr/local/bin/yams
+uninstall: ## Remove yams from the system (via meson/ninja manifest)
+	@if [ -d "build" ]; then \
+		sudo ninja -C build uninstall; \
+	else \
+		sudo rm -f /usr/local/bin/yams; \
+		echo "Warning: no build directory found; removed binary only."; \
+	fi
