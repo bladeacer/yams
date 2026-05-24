@@ -15,5 +15,6 @@ extern WINDOW *meta_sub;
 extern WINDOW *lyr_sub;
 extern PANEL  *main_panel;
 
-void recreate_layout();
+void recreate_layout(void);
+void compute_layout(int max_y, int max_x, Geometry *out);
 #endif

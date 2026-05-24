@@ -47,3 +47,12 @@ test_art_cache = executable('test_art_cache',
 )
 
 test('art cache functions', test_art_cache)
+
+test_layout = executable('test_layout',
+  ['test_layout.c', '../src/layout_compute.c'],
+  dependencies: [cmocka_dep],
+  include_directories: inc,
+  c_args: test_c_args,
+)
+
+test('layout computation', test_layout)

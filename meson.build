@@ -37,6 +37,7 @@ sources = [
   'src/utils.c',
   'src/art.c',
   'src/layout.c',
+  'src/layout_compute.c',
   'src/terminal.c',
   'src/panes.c',
   'src/art_manager.c',

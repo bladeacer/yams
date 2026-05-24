@@ -10,6 +10,7 @@
 #include <libavformat/avio.h>
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
+#include <math.h>
 #include <chafa.h>
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize.h"
@@ -472,11 +473,17 @@ char *render_art_to_buffer(int x, int y, int w, int h,
             if (ascii_w < 1) ascii_w = 1;
             int rh = h > 0 ? h : 1;
 
-            uint8_t *resized = malloc((size_t)ascii_w * rh * 4);
+            double scale = fmin((double)ascii_w / img_w, (double)rh / img_h);
+            int sw = (int)(img_w * scale);
+            if (sw < 1) sw = 1;
+            int sh = (int)(img_h * scale);
+            if (sh < 1) sh = 1;
+
+            uint8_t *resized = malloc((size_t)sw * sh * 4);
             if (resized) {
                 stbir_resize_uint8(pixels, img_w, img_h, 0,
-                                   resized, ascii_w, rh, 0, 4);
-                render_chafa_to_gs(resized, ascii_w, rh, x, y, w, rh, tags, out);
+                                   resized, sw, sh, 0, 4);
+                render_chafa_to_gs(resized, sw, sh, x, y, w, rh, tags, out);
                 free(resized);
             } else {
                 render_chafa_to_gs(pixels, img_w, img_h, x, y, w, h, tags, out);
