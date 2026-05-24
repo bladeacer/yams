@@ -337,10 +337,12 @@ static void handle_keypress(int ch, long now) {
         }
         case '+':
             set_seek_interval(get_seek_interval() + 5);
+            { char buf[64]; snprintf(buf, sizeof(buf), "Seek interval: %ds", get_seek_interval()); show_status_msg(buf); }
             resize_pending = true;
             break;
         case '-':
             set_seek_interval(get_seek_interval() - 5);
+            { char buf[64]; snprintf(buf, sizeof(buf), "Seek interval: %ds", get_seek_interval()); show_status_msg(buf); }
             resize_pending = true;
             break;
 
@@ -424,10 +426,6 @@ void show_help_overlay(long now) {
     HELP_L("a",     "Art Mode Selector");
     HELP_L("p",     "Player Selector");
     HELP_L("ESC/?", "Close this menu");
-
-    wattron(help_win, A_DIM);
-    mvwprintw(help_win, h-2, (w-26)/2, "Press ESC or ? to return");
-    wattroff(help_win, A_DIM);
 
     update_panels();
     doupdate();

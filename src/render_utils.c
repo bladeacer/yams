@@ -61,6 +61,8 @@ void draw_help_text(WINDOW *win, int y, int x) {
     int max_h, max_w;
     getmaxyx(win, max_h, max_w);
 
+    if (cur_y >= max_h) return;
+
     wattron(win, A_BOLD);
     draw_item(win, "q", "Quit", &cur_y, &cur_x, x, max_h, max_w);
     draw_item(win, "r", "Refresh", &cur_y, &cur_x, x, max_h, max_w);
@@ -82,9 +84,13 @@ void draw_help_text(WINDOW *win, int y, int x) {
     cur_y++;
     cur_x = x;
 
+    if (cur_y >= max_h) return;
+
     char seek_str[32];
     snprintf(seek_str, sizeof(seek_str), "Seek: %ds", get_seek_interval());
     draw_item(win, "-/+", seek_str, &cur_y, &cur_x, x, max_h, max_w);
+
+    draw_item(win, "s", "Set Seek", &cur_y, &cur_x, x, max_h, max_w);
 
     snprintf(seek_str, sizeof(seek_str), "Art: %s", art_modes[get_art_mode()].name);
     draw_item(win, "a", seek_str, &cur_y, &cur_x, x, max_h, max_w);
@@ -154,18 +160,19 @@ void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
     int mid_x = max_x / 2;
     werase(win);
 
-    wattron(win, A_BOLD);
+    wattron(win, COLOR_PAIR(4));
     const char* logo[] = {
-        "██╗   ██╗ █████╗ ███╗   ███╗███████╗",
-        "╚██╗ ██╔╝██╔══██╗████╗ ████║██╔════╝",
-        " ╚████╔╝ ███████║██╔████╔██║███████╗",
-        "  ╚██╔╝  ██╔══██║██║╚██╔╝██║╚════██║",
-        "   ██║   ██║  ██║██║ ╚═╝ ██║███████║",
-        "   ╚═╝   ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝"
+        "    ######",
+        "  ##  ##  ##",
+        " ##   ##   ##  yams",
+        " ##   ##   ##",
+        "  ##  ##  ##",
+        "    ######",
     };
-    for(int i = 0; i < 5; i++) {
-        mvwprintw(win, mid_y - 6 + i, mid_x - 18, "%s", logo[i]);
+    for (int i = 0; i < 6; i++) {
+        mvwprintw(win, mid_y - 6 + i, mid_x - 9, "%s", logo[i]);
     }
+    wattroff(win, COLOR_PAIR(4));
     const char* msg2 = "Awaiting Player Input...";
     mvwprintw(win, mid_y + 1, mid_x - (strlen(msg2)/2), "%s", msg2);
     wattroff(win, A_BOLD);
