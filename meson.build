@@ -43,7 +43,7 @@ sources = [
   'src/art_manager.c',
   'src/render_utils.c',
   'src/config.c',
-  'src/player_backend/player_backend_macos.c',
+  'src/player_backend/player_backend.c',
   'src/player_backend/player_backend_mpris.c',
   'lib/trim.c',
 ]
