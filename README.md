@@ -1,9 +1,15 @@
 # yams
 
-![Screenshot](preview.webp)
-
 yams (yet another media screensaver) is a media screensaver that displays
 MPRIS metadata and album art (ASCII/braille/sixel/others) in the terminal.
+
+## Screenshots
+
+| Art Mode | Preview |
+| --- | --- |
+| [ASCII Preview](preview_ascii.webp): Never Gonna Give You Up by Rick Astley  | ![yams ASCII Preview: Never Gonna Give You Up by Rick Astley](preview_ascii.webp) |
+| [Braille Preview](preview_braille.webp): Heroes Tonight by Janji and Johnning (NCS)  | ![yams Braille Preview: Heroes Tonight by Janji and Johnning (NCS)](preview_braille.webp) |
+| [Sixel Preview](preview_sixel.webp): Once Upon a Time by Toby Fox | ![yams Sixel Preview: Once Upon a Time by Toby Fox](preview_sixel.webp) |
 
 ## Features
 
@@ -126,7 +132,7 @@ brew install ncurses playerctl ffmpeg chafa glib meson ninja cmocka
 Static builds link all dependencies (chafa, ffmpeg, glib, ncursesw, panelw)
 directly into the binary. Static library variants (`.a` files) are required.
 
-## Contributing / Development
+## Development
 
 ```bash
 make run              # debug build, run in place
@@ -151,12 +157,15 @@ cmocka is optional; meson will fetch and build it as a subproject if not found s
 ## Known Issues
 
 - When opened in tmux, switching focus away and back means the program can only
-exit with Ctrl+C instead of q.
+exit with `Ctrl+C` instead of `q`.
 
 - Rendered Sixel art feels small at larger screen resolution
 
-- When new lyrics are loaded, a media next + previous is required for it to see
-the new lyrics.
+- When new lyrics are loaded/switching between, a media next + previous is
+required for it to see the new lyrics.
+
+- Last active player does not auto update itself automatically after setting
+target player and switching back to auto.
 
 ## Tested Media Players
 
@@ -167,10 +176,14 @@ the new lyrics.
 
 Should work with any other MPRIS-compliant media players.
 
-> PRs welcome to add tested media player entries.
+## Contributing
+
+PRs are welcome to add tested media player entries, cleaning up/improving parts
+of the codebase.
 
 ## Planned
 
+- Fixes for remaining known issues
 - Configuration file
 - More flexible/modular directory conventions for macOS
 
