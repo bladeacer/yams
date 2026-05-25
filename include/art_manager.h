@@ -5,6 +5,7 @@
 
 extern bool art_refresh_requested;
 
+void free_art(void);
 void update_and_render_art(const char* source, const char* title, int w, int h, bool force);
 void replay_art_buffer(void);
 void reset_art(void);

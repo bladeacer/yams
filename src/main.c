@@ -48,8 +48,12 @@ void handle_exit(int sig) {
     if (player_fd != -1) close(player_fd);
     if (metadata_pid > 0) kill(metadata_pid, SIGKILL);
     if (ctrl_pid > 0) kill(ctrl_pid, SIGKILL);
-    cleanup_ui(sig); 
-    exit(0);
+    free_art();
+    free(meta_args);
+    meta_args = NULL;
+    meta_args_len = 0;
+    close_debug();
+    cleanup_ui(sig);
 }
 
 void handle_winch(int sig) {

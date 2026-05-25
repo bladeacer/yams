@@ -65,11 +65,22 @@ and details.
 
 ## Nix
 
+If you have Nix installed with Flakes enabled, you can build or run **yams**
+without manual dependency setup
+
 ```bash
+git clone --depth=1 https://codeberg.org/bladeacer/yams.git
+cd yams
+nix run
+
+# Build yams (binary will be in ./result/bin/yams)
+nix build
+
+# Enter a development shell with all tools (valgrind, meson, etc.)
 nix develop
-sudo make install
-yams
 ```
+
+Note: This is not tested, Nix users do let me know if it works (or fails).
 
 ## Dependencies
 
@@ -84,11 +95,13 @@ yams
 
 ### Build
 
-- Git, GNU Make, [meson](https://mesonbuild.com/), [ninja](https://ninja-build.org/), awk
+- Git, GNU Make, [meson](https://mesonbuild.com/),
+[ninja](https://ninja-build.org/), awk, util-linux (for script), procps (for pgrep/ps)
 
 ### Test
 
 - [cmocka](https://cmocka.org/) (meson falls back to a bundled subproject if not found)
+
 
 ### Linux
 
@@ -96,18 +109,19 @@ yams
 ```bash
 sudo apt install libncursesw6 libncurses-dev libpanelw6 libpanel-dev \
   playerctl libavformat-dev libavcodec-dev libswscale-dev libavutil-dev \
-  chafa libchafa-dev libglib2.0-dev meson ninja-build cmocka
+  chafa libchafa-dev libglib2.0-dev meson ninja-build cmocka \
+  bsdutils procps valgrind
 ```
 
 **Arch**
 ```bash
-sudo pacman -S ncurses playerctl ffmpeg chafa glib2 meson ninja cmocka
+sudo pacman -S ncurses playerctl ffmpeg chafa glib2 meson ninja cmocka util-linux procps valgrind
 ```
 
 **Fedora**
 ```bash
 sudo dnf install ncurses-devel playerctl ffmpeg-devel chafa-devel \
-  glib2-devel meson ninja-build cmocka-devel
+  glib2-devel meson ninja-build cmocka-devel util-linux procps-ng valgrind
 ```
 
 ### macOS (Homebrew)
@@ -116,7 +130,14 @@ sudo dnf install ncurses-devel playerctl ffmpeg-devel chafa-devel \
 brew install ncurses playerctl ffmpeg chafa glib meson ninja cmocka
 ```
 
-> macOS note: terminal features (sixel, braille art) may vary.
+Note: yams requires an MPRIS-compatible player.
+
+While the code probably compiles on macOS, you may need a D-Bus bridge to
+control macOS media players.
+
+Valgrind might take a fair bit of setup.
+
+Use leaks (built-in) or compile with -fsanitize=address for memory debugging.
 
 ## Build Targets
 

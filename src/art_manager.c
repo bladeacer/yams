@@ -50,6 +50,12 @@ void expire_art_debounce(void) {
     last_metadata_change_time = 0;
 }
 
+void free_art(void) {
+    free(art_buffer);
+    art_buffer = NULL;
+    art_buffer_len = 0;
+}
+
 void reset_art() {
     free(art_buffer);
     art_buffer = NULL;

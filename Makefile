@@ -66,7 +66,23 @@ test: ## Build and run unit tests (via ninja test, cmocka native output)
 	@ninja -C build test
 
 valgrind: build ## Run valgrind leak check on yams (report saved to valgrind_report.txt)
-	valgrind --leak-check=full --log-file=valgrind_report.txt ./build/yams
+	@script -qfc "timeout 5 valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --log-file=valgrind_report.txt ./build/yams" /dev/null 2>/dev/null; \
+	 printf "$(GREEN)--- Valgrind Summary ---$(RESET)\n"; \
+	 grep -E '(definitely|indirectly|possibly|still reachable|ERROR SUMMARY)' valgrind_report.txt | grep -v 'loss record'
+
+ps: build ## Monitor CPU/MEM for 5 seconds using pseudo-tty sandbox
+	@echo "Launching yams in TTY sandbox and monitoring for 5 seconds..."
+	@# Use script to provide a TTY, timeout to auto-kill, and & to background it
+	@script -qfc "timeout 5 ./build/yams" /dev/null >/dev/null 2>&1 & \
+	sleep 0.7; \
+	YAMS_PID=$$(pgrep -n yams); \
+	if [ -z "$$YAMS_PID" ]; then echo "Failed to capture PID"; exit 1; fi; \
+	printf "$(GREEN)%6s %6s %8s$(RESET)\n" "%CPU" "%MEM" "RSS"; \
+	for i in {1..5}; do \
+		ps -p $$YAMS_PID -o %cpu,%mem,rss --no-headers 2>/dev/null || break; \
+		sleep 1; \
+	done; \
+	printf "$(GREEN)--- Resource Check Complete ---$(RESET)\n"
 
 release: clean ## Build a stripped static release binary without debug/tests
 	@meson setup build \
