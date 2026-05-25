@@ -92,6 +92,30 @@ static void test_parse_block_art_url_skip_data(void **state) {
     assert_int_equal(strlen(m.art_url), 0);
 }
 
+static void test_parse_block_art_url_at_sentinel(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "PATH|/path/to/song.flac\tART|@";
+    assert_false(parse_block(input));
+    assert_string_equal(m.art_url, "/path/to/song.flac");
+}
+
+static void test_parse_block_art_url_at_sentinel_no_path(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "ART|@";
+    assert_false(parse_block(input));
+    assert_int_equal(strlen(m.art_url), 0);
+}
+
+static void test_parse_block_art_url_data_with_path(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "PATH|/path/to/song.flac\tART|data:image/png;base64,abc";
+    assert_false(parse_block(input));
+    assert_string_equal(m.art_url, "/path/to/song.flac");
+}
+
 static void test_parse_block_lyrics_on_new_song(void **state) {
     (void)state;
     clear_metadata();
@@ -398,6 +422,9 @@ int main(void) {
         cmocka_unit_test(test_parse_block_player_path),
         cmocka_unit_test(test_parse_block_art_url),
         cmocka_unit_test(test_parse_block_art_url_skip_data),
+        cmocka_unit_test(test_parse_block_art_url_at_sentinel),
+        cmocka_unit_test(test_parse_block_art_url_at_sentinel_no_path),
+        cmocka_unit_test(test_parse_block_art_url_data_with_path),
         cmocka_unit_test(test_parse_block_lyrics_on_new_song),
         cmocka_unit_test(test_parse_block_status_change_only),
         cmocka_unit_test(test_parse_block_no_change),

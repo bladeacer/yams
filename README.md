@@ -155,6 +155,9 @@ exit with Ctrl+C instead of q.
 
 - Rendered Sixel art feels small at larger screen resolution
 
+- When new lyrics are loaded, a media next + previous is required for it to see
+the new lyrics.
+
 ## Tested Media Players
 
 - mpv (requires mpv-mpris)

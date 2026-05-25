@@ -13,6 +13,7 @@
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <signal.h>
+#include <libavutil/log.h>
 #include "ui.h"
 #include "metadata.h"
 #include "utils.h"
@@ -166,20 +167,44 @@ void run_player_cmd(const char *action, const char *param) {
     }
 }
 
+static void strip_data_art(char *block) {
+    char *p = block;
+    while ((p = strstr(p, "\tART|data:image")) != NULL) {
+        char *val_start = p + 5;
+        char *field_end = strchr(val_start, '\t');
+        if (field_end) {
+            size_t trailing = strlen(field_end);
+            memmove(val_start + 1, field_end, trailing + 1);
+        } else {
+            val_start[1] = '\0';
+        }
+        val_start[0] = '@';
+        p = val_start + 1;
+    }
+}
+
 static bool process_metadata_stream() {
     bool changed = false;
     char *start = poll_buffer;
+
+    DBG("process_metadata_stream: buf_idx=%zu, buffer=[%s]", buf_idx, poll_buffer);
     
     while (1) {
         char *end_tag = strstr(start, "[[END]]");
         if (!end_tag) break;
 
+        DBG("  found [[END]] at offset %td", end_tag - poll_buffer);
+
         char *target = strstr(start, "PLAYER|");
         if (target && target < end_tag) {
             *end_tag = '\0';
+            strip_data_art(target);
+            DBG("  calling parse_block for block at offset %td: [%s]", target - poll_buffer, target);
             if (parse_block(target)) {
                 changed = true;
             }
+        } else {
+            DBG("  skipping block (no PLAYER| marker)");
         }
 
         start = end_tag + 7; 
@@ -490,21 +515,78 @@ static void handle_player_data() {
     char chunk[16384];
     ssize_t n;
     bool data_read = false;
+    static bool art_skip = false;
 
     while ((n = read(player_fd, chunk, sizeof(chunk))) > 0) {
+        if (art_skip) {
+            char *tab = memchr(chunk, '\t', (size_t)n);
+            if (tab) {
+                size_t skip = (size_t)(tab - chunk);
+                n -= (ssize_t)skip;
+                memmove(chunk, tab, (size_t)n);
+                art_skip = false;
+                DBG("  art_skip: found \\t, kept %zd bytes (preserving separator)", n);
+            } else {
+                DBG("  art_skip: no \\t, skipping %zd bytes", n);
+                continue;
+            }
+        }
+
+        size_t off = 0;
+        while (n > 0) {
+            if ((size_t)n - off < 15) break;
+            char *p = (char *)memmem(chunk + off, (size_t)n - off, "\tART|data:image", 15);
+            if (!p) break;
+
+            size_t pos = (size_t)(p - chunk);
+            char *val = p + 5;
+            size_t vrem = (size_t)n - (pos + 5);
+            char *tab = (char *)memchr(val, '\t', vrem);
+
+            if (tab) {
+                size_t ulen = (size_t)(tab - val);
+                size_t after = (size_t)n - (pos + 5 + ulen);
+                val[0] = '@';
+                if (after > 0)
+                    memmove(val + 1, tab, after);
+                n -= (ssize_t)(ulen - 1);
+                off = pos + 6;
+                DBG("  stripped data URI at %zu, chunk now %zd bytes", pos, n);
+            } else {
+                size_t keep = pos + 6;
+                chunk[pos + 5] = '@';
+                n = (ssize_t)keep;
+                art_skip = true;
+                DBG("  truncated data URI at %zu, chunk now %zd, art_skip set", pos, n);
+                break;
+            }
+        }
+
         if (buf_idx + n >= BUFFER_SIZE - 1) {
+            DBG("OVERFLOW: buf_idx=%zu, incoming=%zd, BUFFER_SIZE=%d", buf_idx, n, BUFFER_SIZE);
+            DBG("  buffer before: [%s]", poll_buffer);
+
             char *first = strstr(poll_buffer, "[[END]]");
             if (first) {
                 size_t trailing = buf_idx - (first - poll_buffer + 7);
                 memmove(poll_buffer, first + 7, trailing);
                 buf_idx = trailing;
+                DBG("  trimmed at [[END]], buf_idx now %zu", buf_idx);
             } else {
+                DBG("  no [[END]], resetting buffer");
                 buf_idx = 0;
             }
             poll_buffer[buf_idx] = '\0';
+
+            if (buf_idx + n >= BUFFER_SIZE - 1) {
+                DBG("  still overflows, full reset");
+                buf_idx = 0;
+                poll_buffer[0] = '\0';
+            }
+            DBG("  buffer after: [%s]", poll_buffer);
         }
-        memcpy(poll_buffer + buf_idx, chunk, n);
-        buf_idx += n;
+        memcpy(poll_buffer + buf_idx, chunk, (size_t)n);
+        buf_idx += (size_t)n;
         poll_buffer[buf_idx] = '\0';
         data_read = true;
     }
@@ -519,6 +601,7 @@ static void handle_player_data() {
     if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
         close(player_fd);
         player_fd = -1;
+        art_skip = false;
         clear_metadata();
         resize_pending = true;
     }
@@ -590,6 +673,7 @@ static void maintain_subprocesses(const char *fmt, long now) {
 }
 
 int main() {
+    av_log_set_level(AV_LOG_QUIET);
     setlocale(LC_ALL, "");
     if (getenv("YAMS_EXIT_IMMEDIATELY")) { init_ui(); cleanup_ui(0); return 0; }
     init_debug();
