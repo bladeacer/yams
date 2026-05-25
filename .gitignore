@@ -10,3 +10,6 @@ perf.data*
 /subprojects/packagecache/
 /subprojects/.wraplock
 valgrind_report.txt
+result*
+*.jpg 
+*.png 

@@ -18,6 +18,22 @@
         "type": "github"
       }
     },
+    "mediaremote-adapter": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1778511123,
+        "narHash": "sha256-+EZy5qdNombUq8knkeUmycIZuPp5G+IrYlrtdF+Y0ZU=",
+        "owner": "ungive",
+        "repo": "mediaremote-adapter",
+        "rev": "3ac3d4bdf862c7b5399b4fba4df5689f5c38609a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ungive",
+        "repo": "mediaremote-adapter",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1777954456,
@@ -37,6 +53,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "mediaremote-adapter": "mediaremote-adapter",
         "nixpkgs": "nixpkgs"
       }
     },

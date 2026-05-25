@@ -419,6 +419,15 @@ static void handle_player_data() {
   static bool art_skip = false;
 
   while ((n = read(player_fd, chunk, sizeof(chunk))) > 0) {
+    // backends that own their own stream format (e.g. macOS JSON) handle
+    // parsing directly; the legacy playerctl path is used when NULL
+    if (backend && backend->parse_chunk) {
+      if (backend->parse_chunk(chunk, (size_t)n))
+        resize_pending = true;
+      data_read = true;
+      continue;
+    }
+
     if (art_skip) {
       char *tab = memchr(chunk, '\t', (size_t)n);
       if (tab) {
@@ -498,8 +507,9 @@ static void handle_player_data() {
 
   if (data_read) {
     last_metadata_ms = get_ms();
-    if (process_metadata_stream()) {
-      resize_pending = true;
+    if (!backend || !backend->parse_chunk) {
+      if (process_metadata_stream())
+        resize_pending = true;
     }
   }
 

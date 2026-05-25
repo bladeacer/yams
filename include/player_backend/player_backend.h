@@ -28,6 +28,10 @@ typedef struct {
   pid_t (*spawn_stream)(const char *fmt, int *out_fd);
   bool (*has_player)(void);
 
+  // parse raw bytes from the stream; returns true if metadata changed.
+  // NULL means main.c's legacy playerctl-format parsing is used.
+  bool (*parse_chunk)(const char *data, size_t n);
+
   // future non-playerctl backends
   int (*get_metadata)(TrackInfo *out);
   int (*get_status)(PlaybackStatus *out);
