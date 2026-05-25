@@ -127,17 +127,10 @@ sudo dnf install ncurses-devel playerctl ffmpeg-devel chafa-devel \
 ### macOS (Homebrew)
 
 ```bash
-brew install ncurses playerctl ffmpeg chafa glib meson ninja cmocka
+brew install ncurses nowplaying-cli ffmpeg chafa glib meson ninja cmocka
 ```
 
-Note: yams requires an MPRIS-compatible player.
-
-While the code probably compiles on macOS, you may need a D-Bus bridge to
-control macOS media players.
-
-Valgrind might take a fair bit of setup.
-
-Use leaks (built-in) or compile with -fsanitize=address for memory debugging.
+MacOS support is WIP.
 
 ## Build Targets
 
