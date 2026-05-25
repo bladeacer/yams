@@ -10,4 +10,5 @@
 <!-- 4. separate .c and .h files into src/*.c and lib/*.h -->
 <!--  DONE: Headers in include/, sources in src/, library code in lib/.  -->
 
-5. hopefully move off CLI calls, just API to mpris which is p doable and can be its own small C library too
+1. hopefully move off CLI calls, just API to mpris which is p doable and can be its own small C library too
+5.5. add in functionality to copy nowplaying-cli functionality, create a PlayerBackend that has a struct and some function pointers

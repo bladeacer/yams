@@ -6,15 +6,26 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        optimFlags = if pkgs.stdenv.isx86_64 then "-march=native -mtune=native"
-                     else if pkgs.stdenv.isAarch64 && pkgs.stdenv.isLinux then "-march=native"
-                     else if pkgs.stdenv.isDarwin then "-mcpu=apple-m1"
-                     else "";
-        fullCFlags = "-DNDEBUG -O3 -fno-plt ${optimFlags}";
+        optimFlags =
+          if pkgs.stdenv.isx86_64 then
+            ",-march=native,-mtune=native"
+          else if pkgs.stdenv.isAarch64 && pkgs.stdenv.isLinux then
+            ",-march=native"
+          else if pkgs.stdenv.isDarwin then
+            ",-mcpu=apple-m1"
+          else
+            "";
+
       in
       {
         packages.default = pkgs.stdenv.mkDerivation {
@@ -27,14 +38,17 @@
             ninja
             pkg-config
           ];
-
-          buildInputs = with pkgs; [
-            ncurses
-            playerctl
-            ffmpeg
-            chafa
-            glib
-          ];
+          buildInputs =
+            with pkgs;
+            [
+              ncurses
+              ffmpeg
+              chafa
+              glib
+            ]
+            ++ lib.optionals (!pkgs.stdenv.isDarwin) [
+              playerctl
+            ];
 
           mesonFlags = [
             "--buildtype=release"
@@ -43,29 +57,32 @@
             "-Dstrip=true"
             "-Dtests=false"
             "-Dlogging=false"
-            "-Dc_args=${fullCFlags}"
+            "-Dc_args=-DNDEBUG,-O3,-fno-plt${optimFlags}"
           ];
         };
 
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            gnumake
-            meson
-            ninja
-            pkg-config
-            cmake
-            ncurses
-            playerctl
-            ffmpeg
-            chafa
-            glib
-            cmocka
-            hyperfine
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ 
-            valgrind 
-            procps 
-            util-linux 
-          ];
+          packages =
+            with pkgs;
+            [
+              gnumake
+              meson
+              ninja
+              pkg-config
+              cmake
+              ncurses
+              playerctl
+              ffmpeg
+              chafa
+              glib
+              cmocka
+              hyperfine
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              valgrind
+              procps
+              util-linux
+            ];
         };
       }
     );
