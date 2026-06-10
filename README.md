@@ -199,6 +199,8 @@ of the codebase.
 
 - Fixes for remaining known issues
 - Configuration file
+- Testing with `perf`
+- Better MacOS support
 - More flexible/modular directory conventions for macOS
 
 ## LLM Usage Disclaimer
