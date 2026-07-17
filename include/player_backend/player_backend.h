@@ -2,7 +2,6 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
-// pattern: ifdef for linux or macos, player.c inits the struct depending on OS
 typedef struct {
   char *title;
   char *artist;

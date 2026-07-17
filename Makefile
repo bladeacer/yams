@@ -10,9 +10,6 @@ BOLD  := $(shell printf "\033[1m")
 ARCH         := $(shell uname -m)
 OS           := $(shell uname -s)
 PREFIX       ?= /usr/local
-ADAPTER_REPO := https://github.com/ungive/mediaremote-adapter.git
-ADAPTER_TMP  := /tmp/_yams_adapter_build
-
 # Base Flags
 COMMON_FLAGS := -DNDEBUG -O3 -fno-plt
 
@@ -20,8 +17,6 @@ ifeq ($(ARCH), x86_64)
     OPTIM_FLAGS := -march=native -mtune=native
 else ifeq ($(ARCH), aarch64)
     OPTIM_FLAGS := -march=native
-else ifeq ($(OS), Darwin)
-    OPTIM_FLAGS := -mcpu=apple-m1
 endif
 
 FULL_CFLAGS := $(COMMON_FLAGS) $(OPTIM_FLAGS)
@@ -115,17 +110,6 @@ release-dynamic: clean ## Build a stripped dynamically-linked release binary
 	@echo "\033[32m--- Binary Info ---\033[0m"
 	@ls -lh build/yams
 
-install-adapter-macos: ## (macOS) Clone, cmake-build, and install mediaremote-adapter next to yams
-	@echo "$(CYAN)Cloning mediaremote-adapter...$(RESET)"
-	@rm -rf $(ADAPTER_TMP)
-	@git clone --depth=1 $(ADAPTER_REPO) $(ADAPTER_TMP)
-	@cmake -S $(ADAPTER_TMP) -B $(ADAPTER_TMP)/build -DCMAKE_BUILD_TYPE=Release
-	@cmake --build $(ADAPTER_TMP)/build
-	@echo "$(GREEN)Installing adapter files to $(PREFIX)/bin/...$(RESET)"
-	@sudo cp -r $(ADAPTER_TMP)/build/MediaRemoteAdapter.framework $(PREFIX)/bin/
-	@sudo cp $(ADAPTER_TMP)/bin/mediaremote-adapter.pl $(PREFIX)/bin/
-	@rm -rf $(ADAPTER_TMP)
-
 install: ## Build static release binary and install to system
 	@echo "$(CYAN)Configuring static release build...$(RESET)"
 	@rm -rf build
@@ -140,8 +124,6 @@ install: ## Build static release binary and install to system
 	@ninja -C build
 	@echo "$(GREEN)Installing to system...$(RESET)"
 	@sudo ninja -C build install
-	@if [ "$(OS)" = "Darwin" ]; then $(MAKE) install-adapter-macos PREFIX=$(PREFIX); fi
-
 install-dynamic: ## Build dynamically-linked release binary and install to system
 	@echo "$(CYAN)Configuring dynamic release build...$(RESET)"
 	@rm -rf build
@@ -156,8 +138,6 @@ install-dynamic: ## Build dynamically-linked release binary and install to syste
 	@ninja -C build
 	@echo "$(GREEN)Installing to system...$(RESET)"
 	@sudo ninja -C build install
-	@if [ "$(OS)" = "Darwin" ]; then $(MAKE) install-adapter-macos PREFIX=$(PREFIX); fi
-
 uninstall: ## Remove yams from the system (via meson/ninja manifest)
 	@if [ -d "build" ]; then \
 		sudo ninja -C build uninstall; \

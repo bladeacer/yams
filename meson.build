@@ -1,4 +1,4 @@
-project('yams', 'c', 'objc',
+project('yams', 'c',
   version : '1.0.0',
   default_options : [
     'c_std=c11',
@@ -48,21 +48,13 @@ sources = [
 ]
 
 extra_deps = []
-
-if host_machine.system() == 'darwin'
-  sources += ['src/player_backend/player_backend_macos.m']
-  add_project_arguments('-fobjc-arc', language: 'objc')
-  extra_deps += dependency('appleframeworks',
-      modules: ['Foundation', 'CoreFoundation'])
-else
-  sources += ['src/player_backend/player_backend_mpris.c']
-endif
+sources += ['src/player_backend/player_backend_mpris.c']
 
 inc = include_directories('include', 'lib')
 
 executable('yams',
   sources,
-  dependencies : [ncursesw, panelw, m_dep, libavformat, libavcodec, libswscale, libavutil, chafa] + extra_deps,
+  dependencies : [ncursesw, panelw, m_dep, libavformat, libavcodec, libswscale, libavutil, chafa],
   include_directories : inc,
   install : true
 )

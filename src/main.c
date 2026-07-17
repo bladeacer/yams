@@ -419,7 +419,7 @@ static void handle_player_data() {
   static bool art_skip = false;
 
   while ((n = read(player_fd, chunk, sizeof(chunk))) > 0) {
-    // backends that own their own stream format (e.g. macOS JSON) handle
+    // backends that own their own stream format handle
     // parsing directly; the legacy playerctl path is used when NULL
     if (backend && backend->parse_chunk) {
       if (backend->parse_chunk(chunk, (size_t)n))

@@ -13,3 +13,4 @@ valgrind_report.txt
 result*
 *.jpg 
 *.png 
+.headroom

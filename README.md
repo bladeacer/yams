@@ -102,7 +102,6 @@ Note: This is not tested, Nix users do let me know if it works (or fails).
 
 - [cmocka](https://cmocka.org/) (meson falls back to a bundled subproject if not found)
 
-
 ### Linux
 
 **Debian/Ubuntu**
@@ -124,13 +123,16 @@ sudo dnf install ncurses-devel playerctl ffmpeg-devel chafa-devel \
   glib2-devel meson ninja-build cmocka-devel util-linux procps-ng valgrind
 ```
 
-### macOS (Homebrew)
+### MacOS
 
-```bash
-brew install ncurses nowplaying-cli ffmpeg chafa glib meson ninja cmocka
-```
+MacOS is not supported because of the following:
+1. I do not own a MacBook so maintenance would be all but impossible.
+2. There is no reliable equivalent to `playerctl` equivalent for MacOS.
+> that does not use undocumented APIs or fragile bridges/adapters
 
-MacOS support is WIP.
+### Windows
+
+Doubt it works, even in WSL to bridge to how Windows handles audio in the first place.
 
 ## Build Targets
 
@@ -200,8 +202,6 @@ of the codebase.
 - Fixes for remaining known issues
 - Configuration file
 - Testing with `perf`
-- Better MacOS support
-- More flexible/modular directory conventions for macOS
 
 ## LLM Usage Disclaimer
 
