@@ -3,6 +3,14 @@
 yams (yet another media screensaver) is a media screensaver that displays
 MPRIS metadata and album art (ASCII/braille/sixel/others) in the terminal.
 
+## LLM Usage Disclaimer
+
+I used LLMs to help with development. This is my first project using ncurses,
+C, UNIX tools like strace and going somewhat low-level.
+
+Due to Codeberg recent change in TOS on AI assisted code, the repository has been
+moved to GitHub instead.
+
 ## Screenshots
 
 | Art Mode | Preview |
@@ -202,11 +210,6 @@ of the codebase.
 - Fixes for remaining known issues
 - Configuration file
 - Testing with `perf`
-
-## LLM Usage Disclaimer
-
-I used LLMs to help with development. This is my first project using ncurses,
-C, UNIX tools like strace and going somewhat low-level.
 
 ## Credits
 
