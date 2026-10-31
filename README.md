@@ -60,7 +60,7 @@ metadata/art/lyrics update immediately
 ## Quick Start
 
 ```bash
-git clone --depth=1 https://codeberg.org/bladeacer/yams.git
+git clone --depth=1 https://github.com/bladeacer/yams
 cd yams
 sudo make install
 yams
@@ -77,7 +77,7 @@ If you have Nix installed with Flakes enabled, you can build or run **yams**
 without manual dependency setup
 
 ```bash
-git clone --depth=1 https://codeberg.org/bladeacer/yams.git
+git clone --depth=1 https://github.com/bladeacer/yams
 cd yams
 nix run
 

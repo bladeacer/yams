@@ -181,7 +181,7 @@ void draw_fallback_screen(WINDOW *win, int max_y, int max_x) {
         wattron(win, A_DIM);
         const char* msg1 = "Yet Another Media Screensaver";
         mvwprintw(win, mid_y + 2, mid_x - (strlen(msg1)/2), "%s", msg1);
-        const char* repo = "https://codeberg.org/bladeacer/yams";
+        const char* repo = "https://github.com/bladeacer/yams";
         mvwprintw(win, mid_y + 4, mid_x - (strlen(repo)/2), "%s", repo);
         wattroff(win, A_DIM);
 
