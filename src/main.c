@@ -4,6 +4,7 @@
 #include "debug.h"
 #include "metadata.h"
 #include "player_backend/player_backend.h"
+#include "stream.h"
 #include "ui.h"
 #include "utils.h"
 #include <errno.h>
@@ -38,7 +39,7 @@ static long last_metadata_ms = 0;
 static PlayerBackend *backend = NULL;
 
 static bool process_metadata_stream(void);
-static void maintain_subprocesses(const char *fmt, long now);
+static void maintain_subprocesses(long now);
 
 volatile sig_atomic_t exit_requested = 0;
 static volatile sig_atomic_t exit_signal = 0;
@@ -57,6 +58,13 @@ static void handle_exit_signal(int sig) {
 static void handle_winch(int sig) {
   (void)sig;
   resize_pending = true;
+}
+
+static volatile sig_atomic_t child_event = 0;
+
+static void handle_child(int sig) {
+  (void)sig;
+  child_event = 1;
 }
 
 static void handle_exit(int sig) {
@@ -90,28 +98,77 @@ static void install_signal_handlers(void) {
 
   sa.sa_handler = handle_winch;
   sigaction(SIGWINCH, &sa, NULL);
+
+  sa.sa_handler = handle_child;
+  sigaction(SIGCHLD, &sa, NULL);
 }
 
-static bool query_initial_metadata(const char *fmt) {
-  (void)fmt;
-  process_metadata_stream();
-  return true;
+static void stop_metadata_stream(void) {
+  if (metadata_pid > 0) {
+    kill(metadata_pid, SIGKILL);
+    metadata_pid = -1;
+  }
+  if (player_fd != -1) {
+    close(player_fd);
+    player_fd = -1;
+  }
+  buf_idx = 0;
+  poll_buffer[0] = '\0';
+}
+
+static void start_metadata_stream(void) {
+  if (!backend || !meta_fmt)
+    return;
+
+  metadata_pid = backend->spawn_stream(meta_fmt, &player_fd);
+  if (player_fd != -1)
+    fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL, 0) | O_NONBLOCK);
+}
+
+static void restart_metadata_stream(void) {
+  stop_metadata_stream();
+  clear_metadata();
+  last_metadata_ms = 0;
+  expire_art_debounce();
+  start_metadata_stream();
+}
+
+/* Reap every terminated child once per SIGCHLD. The handler only sets a flag,
+ * so all waitpid() calls happen here, off the signal path. */
+static void reap_children(void) {
+  int status;
+  pid_t pid;
+
+  while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+    if (pid == metadata_pid) {
+      if (WIFEXITED(status))
+        DBG("metadata stream %d exited with status %d", (int)pid,
+            WEXITSTATUS(status));
+      else if (WIFSIGNALED(status))
+        DBG("metadata stream %d killed by signal %d", (int)pid,
+            WTERMSIG(status));
+      metadata_pid = -1;
+      if (player_fd != -1) {
+        close(player_fd);
+        player_fd = -1;
+      }
+      clear_metadata();
+      resize_pending = true;
+    } else if (backend && backend->reap_child) {
+      backend->reap_child(pid);
+    } else if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+      DBG("child %d exited with status %d", (int)pid, WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+      DBG("child %d killed by signal %d", (int)pid, WTERMSIG(status));
+    }
+  }
 }
 
 static void strip_data_art(char *block) {
-  char *p = block;
-  while ((p = strstr(p, "\tART|data:image")) != NULL) {
-    char *val_start = p + 5;
-    char *field_end = strchr(val_start, '\t');
-    if (field_end) {
-      size_t trailing = strlen(field_end);
-      memmove(val_start + 1, field_end, trailing + 1);
-    } else {
-      val_start[1] = '\0';
-    }
-    val_start[0] = '@';
-    p = val_start + 1;
-  }
+  size_t len = strlen(block);
+  bool skip = false;
+  stream_strip_data_art(block, &len, &skip);
+  block[len] = '\0';
 }
 
 static bool process_metadata_stream() {
@@ -326,25 +383,7 @@ static void handle_keypress(int ch, long now) {
     old_player[sizeof(old_player) - 1] = '\0';
     show_player_selector();
     if (strcmp(get_player_name(), old_player) != 0) {
-      if (metadata_pid > 0)
-        kill(metadata_pid, SIGKILL);
-      if (player_fd != -1) {
-        close(player_fd);
-        player_fd = -1;
-      }
-      metadata_pid = -1;
-      buf_idx = 0;
-      poll_buffer[0] = '\0';
-      clear_metadata();
-      last_metadata_ms = 0;
-      expire_art_debounce();
-      if (meta_fmt) {
-        metadata_pid = backend->spawn_stream(meta_fmt, &player_fd);
-        if (player_fd != -1) {
-          fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL, 0) | O_NONBLOCK);
-        }
-        query_initial_metadata(meta_fmt);
-      }
+      restart_metadata_stream();
     }
     resize_pending = true;
     break;
@@ -597,80 +636,10 @@ static void handle_player_data() {
       continue;
     }
 
-    if (art_skip) {
-      char *tab = memchr(chunk, '\t', (size_t)n);
-      if (tab) {
-        size_t skip = (size_t)(tab - chunk);
-        n -= (ssize_t)skip;
-        memmove(chunk, tab, (size_t)n);
-        art_skip = false;
-        DBG("  art_skip: found \\t, kept %zd bytes (preserving separator)", n);
-      } else {
-        DBG("  art_skip: no \\t, skipping %zd bytes", n);
-        continue;
-      }
-    }
-
-    size_t off = 0;
-    while (n > 0) {
-      if ((size_t)n - off < 15)
-        break;
-      char *p =
-          (char *)memmem(chunk + off, (size_t)n - off, "\tART|data:image", 15);
-      if (!p)
-        break;
-
-      size_t pos = (size_t)(p - chunk);
-      char *val = p + 5;
-      size_t vrem = (size_t)n - (pos + 5);
-      char *tab = (char *)memchr(val, '\t', vrem);
-
-      if (tab) {
-        size_t ulen = (size_t)(tab - val);
-        size_t after = (size_t)n - (pos + 5 + ulen);
-        val[0] = '@';
-        if (after > 0)
-          memmove(val + 1, tab, after);
-        n -= (ssize_t)(ulen - 1);
-        off = pos + 6;
-        DBG("  stripped data URI at %zu, chunk now %zd bytes", pos, n);
-      } else {
-        size_t keep = pos + 6;
-        chunk[pos + 5] = '@';
-        n = (ssize_t)keep;
-        art_skip = true;
-        DBG("  truncated data URI at %zu, chunk now %zd, art_skip set", pos, n);
-        break;
-      }
-    }
-
-    if (buf_idx + n >= BUFFER_SIZE - 1) {
-      DBG("OVERFLOW: buf_idx=%zu, incoming=%zd, BUFFER_SIZE=%d", buf_idx, n,
-          BUFFER_SIZE);
-      DBG("  buffer before: [%s]", poll_buffer);
-
-      char *first = strstr(poll_buffer, "[[END]]");
-      if (first) {
-        size_t trailing = buf_idx - (first - poll_buffer + 7);
-        memmove(poll_buffer, first + 7, trailing);
-        buf_idx = trailing;
-        DBG("  trimmed at [[END]], buf_idx now %zu", buf_idx);
-      } else {
-        DBG("  no [[END]], resetting buffer");
-        buf_idx = 0;
-      }
-      poll_buffer[buf_idx] = '\0';
-
-      if (buf_idx + n >= BUFFER_SIZE - 1) {
-        DBG("  still overflows, full reset");
-        buf_idx = 0;
-        poll_buffer[0] = '\0';
-      }
-      DBG("  buffer after: [%s]", poll_buffer);
-    }
-    memcpy(poll_buffer + buf_idx, chunk, (size_t)n);
-    buf_idx += (size_t)n;
-    poll_buffer[buf_idx] = '\0';
+    size_t len = (size_t)n;
+    stream_strip_data_art(chunk, &len, &art_skip);
+    buf_idx = stream_buffer_append(poll_buffer, sizeof(poll_buffer), buf_idx,
+                                   chunk, len);
     data_read = true;
   }
 
@@ -683,45 +652,28 @@ static void handle_player_data() {
   }
 
   if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-    close(player_fd);
-    player_fd = -1;
+    stop_metadata_stream();
     art_skip = false;
     clear_metadata();
     resize_pending = true;
   }
 }
 
-static void maintain_subprocesses(const char *fmt, long now) {
-  if (player_fd != -1 && metadata_pid > 0) {
-    int wstatus;
-    pid_t ret = waitpid(metadata_pid, &wstatus, WNOHANG);
-    if (ret == metadata_pid) {
-      DBG("metadata_pid exited, stopping subprocess");
-      close(player_fd);
-      player_fd = -1;
-      metadata_pid = -1;
+static void maintain_subprocesses(long now) {
+  if (player_fd != -1 && metadata_pid > 0 && last_metadata_ms > 0 &&
+      (now - last_metadata_ms) > 2000) {
+    if (backend && !backend->has_player()) {
+      DBG("no playerctl players found, forcing cleanup");
+      stop_metadata_stream();
+      last_metadata_ms = 0;
       clear_metadata();
       resize_pending = true;
-    } else if (last_metadata_ms > 0 && (now - last_metadata_ms) > 2000) {
-      if (backend && !backend->has_player()) {
-        DBG("no playerctl players found, forcing cleanup");
-        kill(metadata_pid, SIGKILL);
-        close(player_fd);
-        player_fd = -1;
-        metadata_pid = -1;
-        last_metadata_ms = 0;
-        clear_metadata();
-        resize_pending = true;
-      }
     }
   }
 
   if (player_fd == -1 && (now - last_player_fail_ms > 2000)) {
     DBG("Attempting playerctl restart...");
-    metadata_pid = backend->spawn_stream(fmt, &player_fd);
-    if (player_fd != -1) {
-      fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL) | O_NONBLOCK);
-    }
+    start_metadata_stream();
     last_player_fail_ms = now;
   }
 }
@@ -757,7 +709,6 @@ int main() {
   if (player_fd != -1)
     fcntl(player_fd, F_SETFL, fcntl(player_fd, F_GETFL, 0) | O_NONBLOCK);
 
-  query_initial_metadata(fmt);
   resize_pending = true;
 
   bool debounce_triggered = false;
@@ -765,6 +716,11 @@ int main() {
   while (1) {
     if (exit_requested)
       break;
+
+    if (child_event) {
+      child_event = 0;
+      reap_children();
+    }
 
     long now = get_ms();
     long elapsed_since_change = now - get_last_metadata_change_time();
@@ -787,7 +743,7 @@ int main() {
         max_fd = player_fd;
     }
 
-    maintain_subprocesses(fmt, now);
+    maintain_subprocesses(now);
 
     struct timeval tv;
 
@@ -807,7 +763,9 @@ int main() {
     if (activity < 0) {
       if (errno == EINTR)
         continue;
-      break;
+      DBG("select failed: %s", strerror(errno));
+      usleep(100000);
+      continue;
     }
 
     if (activity > 0 && FD_ISSET(STDIN_FILENO, &fds)) {

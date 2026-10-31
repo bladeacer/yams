@@ -1,21 +1,8 @@
-#pragma once
+#ifndef PLAYER_BACKEND_H
+#define PLAYER_BACKEND_H
+
 #include <stdbool.h>
 #include <sys/types.h>
-
-typedef struct {
-  char *title;
-  char *artist;
-  char *album;
-  float volume;
-  int duration_ms;
-  int position_ms;
-} TrackInfo;
-
-typedef enum {
-  STATUS_PLAYING,
-  STATUS_PAUSED,
-  STATUS_STOPPED,
-} PlaybackStatus;
 
 typedef struct {
   int (*play_pause)(void);
@@ -31,11 +18,11 @@ typedef struct {
   // NULL means main.c's legacy playerctl-format parsing is used.
   bool (*parse_chunk)(const char *data, size_t n);
 
-  // future non-playerctl backends
-  int (*get_metadata)(TrackInfo *out);
-  int (*get_status)(PlaybackStatus *out);
-  int (*set_volume)(float v);
+  // notification from the main-loop SIGCHLD reaper
+  void (*reap_child)(pid_t pid);
   void (*cleanup)(void); // kills pending ctrl process, frees resources
 } PlayerBackend;
 
 PlayerBackend *player_backend_init(void);
+
+#endif

@@ -43,6 +43,8 @@ sources = [
   'src/art_manager.c',
   'src/render_utils.c',
   'src/config.c',
+  'src/stream.c',
+  'src/subprocess.c',
   'src/player_backend/player_backend.c',
   'lib/trim.c',
 ]

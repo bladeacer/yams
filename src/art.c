@@ -28,19 +28,21 @@ static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w,
   DBG("extract_frame: url=[%s]", url);
 
   AVFormatContext *fmt_ctx = NULL;
-  int ret;
+  AVCodecContext *dec_ctx = NULL;
+  AVPacket *pkt = NULL;
+  AVFrame *frame = NULL;
+  struct SwsContext *sws = NULL;
+  uint8_t *rgba = NULL;
+  int ret = -1;
 
-  ret = avformat_open_input(&fmt_ctx, url, NULL, NULL);
-  if (ret < 0) {
-    DBG("  avformat_open_input FAILED for [%s] (ret=%d)", url, ret);
-    return -1;
+  if (avformat_open_input(&fmt_ctx, url, NULL, NULL) < 0) {
+    DBG("  avformat_open_input FAILED for [%s]", url);
+    goto cleanup;
   }
 
-  ret = avformat_find_stream_info(fmt_ctx, NULL);
-  if (ret < 0) {
-    DBG("  avformat_find_stream_info FAILED for [%s] (ret=%d)", url, ret);
-    avformat_close_input(&fmt_ctx);
-    return -1;
+  if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
+    DBG("  avformat_find_stream_info FAILED for [%s]", url);
+    goto cleanup;
   }
 
   DBG("  opened [%s], %u streams", url, fmt_ctx->nb_streams);
@@ -61,8 +63,7 @@ static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w,
         av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
   if (stream_idx < 0) {
     DBG("  no ATTACHED_PIC or video stream found in [%s]", url);
-    avformat_close_input(&fmt_ctx);
-    return -1;
+    goto cleanup;
   }
 
   DBG("  using stream[%d]", stream_idx);
@@ -71,39 +72,22 @@ static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w,
   const AVCodec *decoder = avcodec_find_decoder(stream->codecpar->codec_id);
   if (!decoder) {
     DBG("  no decoder for codec_id=%d", stream->codecpar->codec_id);
-    avformat_close_input(&fmt_ctx);
-    return -1;
+    goto cleanup;
   }
 
-  AVCodecContext *dec_ctx = avcodec_alloc_context3(decoder);
-  if (!dec_ctx) {
-    avformat_close_input(&fmt_ctx);
-    return -1;
-  }
+  dec_ctx = avcodec_alloc_context3(decoder);
+  if (!dec_ctx)
+    goto cleanup;
 
-  ret = avcodec_parameters_to_context(dec_ctx, stream->codecpar);
-  if (ret < 0) {
-    avcodec_free_context(&dec_ctx);
-    avformat_close_input(&fmt_ctx);
-    return -1;
-  }
+  if (avcodec_parameters_to_context(dec_ctx, stream->codecpar) < 0)
+    goto cleanup;
+  if (avcodec_open2(dec_ctx, decoder, NULL) < 0)
+    goto cleanup;
 
-  ret = avcodec_open2(dec_ctx, decoder, NULL);
-  if (ret < 0) {
-    avcodec_free_context(&dec_ctx);
-    avformat_close_input(&fmt_ctx);
-    return -1;
-  }
-
-  AVPacket *pkt = av_packet_alloc();
-  AVFrame *frame = av_frame_alloc();
-  if (!pkt || !frame) {
-    av_packet_free(&pkt);
-    av_frame_free(&frame);
-    avcodec_free_context(&dec_ctx);
-    avformat_close_input(&fmt_ctx);
-    return -1;
-  }
+  pkt = av_packet_alloc();
+  frame = av_frame_alloc();
+  if (!pkt || !frame)
+    goto cleanup;
 
   if (stream->disposition & AV_DISPOSITION_ATTACHED_PIC) {
     DBG("  decoding attached_pic packet");
@@ -131,21 +115,13 @@ static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w,
 
   if (ret < 0) {
     DBG("  avcodec_send_packet FAILED (ret=%d)", ret);
-    av_packet_free(&pkt);
-    av_frame_free(&frame);
-    avcodec_free_context(&dec_ctx);
-    avformat_close_input(&fmt_ctx);
-    return -1;
+    goto cleanup;
   }
 
   ret = avcodec_receive_frame(dec_ctx, frame);
   if (ret < 0) {
     DBG("  avcodec_receive_frame FAILED (ret=%d)", ret);
-    av_packet_free(&pkt);
-    av_frame_free(&frame);
-    avcodec_free_context(&dec_ctx);
-    avformat_close_input(&fmt_ctx);
-    return -1;
+    goto cleanup;
   }
 
   int w = frame->width;
@@ -164,44 +140,41 @@ static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w,
     frame->color_range = AVCOL_RANGE_JPEG;
   }
 
-  struct SwsContext *sws = sws_getContext(w, h, src_fmt, w, h, AV_PIX_FMT_RGBA,
-                                          SWS_BILINEAR, NULL, NULL, NULL);
+  sws = sws_getContext(w, h, src_fmt, w, h, AV_PIX_FMT_RGBA, SWS_BILINEAR,
+                       NULL, NULL, NULL);
   if (!sws) {
     DBG("  sws_getContext FAILED");
-    av_packet_free(&pkt);
-    av_frame_free(&frame);
-    avcodec_free_context(&dec_ctx);
-    avformat_close_input(&fmt_ctx);
-    return -1;
+    goto cleanup;
   }
 
-  uint8_t *rgba = malloc((size_t)w * h * 4);
+  rgba = malloc((size_t)w * h * 4);
   if (!rgba) {
     DBG("  malloc FAILED for %dx%d rgba", w, h);
-    sws_freeContext(sws);
-    av_packet_free(&pkt);
-    av_frame_free(&frame);
-    avcodec_free_context(&dec_ctx);
-    avformat_close_input(&fmt_ctx);
-    return -1;
+    goto cleanup;
   }
 
   uint8_t *dst_slice[4] = {rgba, NULL, NULL, NULL};
   int dst_stride[4] = {w * 4, 0, 0, 0};
-  sws_scale(sws, (const uint8_t *const *)frame->data, frame->linesize, 0, h,
-            dst_slice, dst_stride);
+  if (sws_scale(sws, (const uint8_t *const *)frame->data, frame->linesize, 0,
+                h, dst_slice, dst_stride) < 0) {
+    DBG("  sws_scale FAILED");
+    goto cleanup;
+  }
 
   *out_pixels = rgba;
   *out_w = w;
   *out_h = h;
+  rgba = NULL;
+  ret = 0;
 
+cleanup:
+  free(rgba);
   sws_freeContext(sws);
   av_frame_free(&frame);
   av_packet_free(&pkt);
   avcodec_free_context(&dec_ctx);
   avformat_close_input(&fmt_ctx);
-
-  return 0;
+  return ret;
 }
 
 static void composite_alpha_on_black(uint8_t *pixels, int w, int h) {
@@ -368,10 +341,6 @@ static unsigned long hash_str(const char *str) {
   while ((c = *str++))
     hash = ((hash << 5) + hash) + (unsigned char)c;
   return hash;
-}
-
-static bool is_remote_url(const char *url) {
-  return strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0;
 }
 
 static char *get_cached_path(const char *url) {
@@ -550,30 +519,9 @@ char *clear_art_cache(void) {
 
 void art_cache_bump(void) { cache_version++; }
 
-char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
-                           ChafaPixelMode pixel_mode, int is_ascii) {
-  DBG("render_art_to_buffer: art_url=[%s] (len=%zu), file_path=[%s] (len=%zu)",
-      m.art_url, strlen(m.art_url), m.file_path, strlen(m.file_path));
-
-  char *input_url = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
-  DBG("  input_url selected: [%s] (len=%zu)", input_url ? input_url : "(null)",
-      input_url ? strlen(input_url) : 0);
-
-  if (!input_url || strlen(input_url) < 5) {
-    DBG("  input_url too short, returning NULL");
-    return NULL;
-  }
-  if (strncmp(input_url, "data:", 5) == 0) {
-    DBG("  data: prefix detected in input_url, falling back to file_path=[%s]",
-        m.file_path);
-    input_url = m.file_path;
-    if (!input_url || strlen(input_url) < 5) {
-      DBG("  file_path too short after data: fallback, returning NULL");
-      return NULL;
-    }
-  }
-
+static char *resolve_cached_input(const char *input_url) {
   char *resolved = NULL;
+
   if (is_remote_url(input_url)) {
     char *cache_path = get_cached_path(input_url);
     if (cache_path) {
@@ -586,12 +534,19 @@ char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
       } else {
         free(cache_path);
         DBG("  remote url, download failed, using raw url");
-        resolved = strdup(input_url);
       }
     }
   }
+
   if (!resolved)
     resolved = strdup(input_url);
+  return resolved;
+}
+
+static uint8_t *load_image(const char *input_url, int *out_w, int *out_h) {
+  char *resolved = resolve_cached_input(input_url);
+  if (!resolved)
+    return NULL;
 
   char decoded[4096];
   const char *av_path = resolved;
@@ -604,8 +559,7 @@ char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
   DBG("  calling extract_frame with av_path=[%s]", av_path);
 
   uint8_t *pixels = NULL;
-  int img_w, img_h;
-
+  int img_w = 0, img_h = 0;
   if (extract_frame(av_path, &pixels, &img_w, &img_h) != 0) {
     DBG("  extract_frame FAILED for [%s]", av_path);
     free(resolved);
@@ -626,8 +580,14 @@ char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
     }
   }
 
-  GString *out = g_string_sized_new(4096);
+  *out_w = img_w;
+  *out_h = img_h;
+  return pixels;
+}
 
+static void render_image(uint8_t *pixels, int img_w, int img_h, int x, int y,
+                         int w, int h, ChafaSymbolTags tags,
+                         ChafaPixelMode pixel_mode, int is_ascii, GString *out) {
   if (pixel_mode == CHAFA_PIXEL_MODE_SYMBOLS) {
     if (is_ascii) {
       int ascii_w = (int)(w * 1.5);
@@ -654,17 +614,51 @@ char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
     } else {
       render_chafa_to_gs(pixels, img_w, img_h, x, y, w, h, tags, out);
     }
-  } else {
-    char clear[512];
-    int cw = w < 510 ? w : 510;
-    memset(clear, ' ', cw);
-    clear[cw] = '\0';
-    for (int r = 0; r < h; r++)
-      g_string_append_printf(out, "\x1b[%d;%dH%s", y + 1 + r, x + 1, clear);
-
-    g_string_append_printf(out, "\x1b[%d;%dH", y + 1, x + 1);
-    render_pixel_to_gs(pixels, img_w, img_h, w, h, pixel_mode, out);
+    return;
   }
+
+  char clear[512];
+  int cw = w < 510 ? w : 510;
+  memset(clear, ' ', (size_t)cw);
+  clear[cw] = '\0';
+  for (int r = 0; r < h; r++)
+    g_string_append_printf(out, "\x1b[%d;%dH%s", y + 1 + r, x + 1, clear);
+
+  g_string_append_printf(out, "\x1b[%d;%dH", y + 1, x + 1);
+  render_pixel_to_gs(pixels, img_w, img_h, w, h, pixel_mode, out);
+}
+
+char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
+                           ChafaPixelMode pixel_mode, int is_ascii) {
+  DBG("render_art_to_buffer: art_url=[%s] (len=%zu), file_path=[%s] (len=%zu)",
+      m.art_url, strlen(m.art_url), m.file_path, strlen(m.file_path));
+
+  char *input_url = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
+  DBG("  input_url selected: [%s] (len=%zu)", input_url ? input_url : "(null)",
+      input_url ? strlen(input_url) : 0);
+
+  if (!input_url || strlen(input_url) < 5) {
+    DBG("  input_url too short, returning NULL");
+    return NULL;
+  }
+  if (strncmp(input_url, "data:", 5) == 0) {
+    DBG("  data: prefix detected in input_url, falling back to file_path=[%s]",
+        m.file_path);
+    input_url = m.file_path;
+    if (!input_url || strlen(input_url) < 5) {
+      DBG("  file_path too short after data: fallback, returning NULL");
+      return NULL;
+    }
+  }
+
+  int img_w = 0, img_h = 0;
+  uint8_t *pixels = load_image(input_url, &img_w, &img_h);
+  if (!pixels)
+    return NULL;
+
+  GString *out = g_string_sized_new(4096);
+  render_image(pixels, img_w, img_h, x, y, w, h, tags, pixel_mode, is_ascii,
+               out);
 
   free(pixels);
   return g_string_free(out, FALSE);

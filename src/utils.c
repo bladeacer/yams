@@ -36,6 +36,11 @@ int xasprintf(char **strp, const char *fmt, ...) {
     return n;
 }
 
+bool is_remote_url(const char *url) {
+    if (!url) return false;
+    return strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0;
+}
+
 void url_decode(char *dst, const char *src) {
     char a, b;
     while (*src) {

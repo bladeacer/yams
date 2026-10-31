@@ -1,7 +1,11 @@
 #include "player_backend/player_backend_mpris.h"
 #include "config.h"
+#include "debug.h"
+#include "subprocess.h"
+#include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -9,19 +13,43 @@
 static pid_t ctrl_pid = -1;
 
 static void reap_ctrl(void) {
-  if (ctrl_pid > 0) {
-    waitpid(ctrl_pid, NULL, WNOHANG);
+  if (ctrl_pid <= 0)
+    return;
+
+  int status;
+  pid_t ret;
+  do {
+    ret = waitpid(ctrl_pid, &status, WNOHANG);
+  } while (ret == -1 && errno == EINTR);
+
+  if (ret == ctrl_pid) {
+    if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+      DBG("playerctl control command exited with status %d",
+          WEXITSTATUS(status));
+    else if (WIFSIGNALED(status))
+      DBG("playerctl control command killed by signal %d", WTERMSIG(status));
+    ctrl_pid = -1;
+  } else if (ret == -1 && errno == ECHILD) {
     ctrl_pid = -1;
   }
 }
 
 static void run_cmd(const char *action, const char *param) {
   reap_ctrl();
+
   pid_t pid = fork();
+  if (pid == -1) {
+    DBG("run_cmd: fork failed: %s", strerror(errno));
+    return;
+  }
+
   if (pid == 0) {
     int devnull = open("/dev/null", O_WRONLY);
-    dup2(devnull, STDOUT_FILENO);
-    dup2(devnull, STDERR_FILENO);
+    if (devnull == -1)
+      _exit(1);
+    if (dup2(devnull, STDOUT_FILENO) == -1 ||
+        dup2(devnull, STDERR_FILENO) == -1)
+      _exit(1);
     close(devnull);
 
     const char *player = get_player_name();
@@ -38,9 +66,14 @@ static void run_cmd(const char *action, const char *param) {
     args[i] = NULL;
     execvp("playerctl", args);
     _exit(1);
-  } else if (pid > 0) {
-    ctrl_pid = pid;
   }
+
+  ctrl_pid = pid;
+}
+
+static void mpris_reap_child(pid_t pid) {
+  if (pid == ctrl_pid)
+    ctrl_pid = -1;
 }
 
 static int mpris_play_pause(void) {
@@ -111,45 +144,38 @@ static pid_t mpris_spawn_stream(const char *fmt, int *out_fd) {
 }
 
 static bool mpris_has_player(void) {
-  int pipe_fds[2];
-  if (pipe(pipe_fds) == -1)
+  char *const args[] = {"playerctl", "-l", NULL};
+  CommandOutput out;
+
+  /* On capture failure keep the stream alive rather than tearing it down. */
+  if (!capture_command(args, &out))
     return true;
-  pid_t pid = fork();
-  if (pid == -1) {
-    close(pipe_fds[0]);
-    close(pipe_fds[1]);
-    return true;
+
+  if (out.exited && out.exit_status != 0)
+    DBG("playerctl -l exited with status %d", out.exit_status);
+
+  bool found = false;
+  for (size_t i = 0; i < out.len; i++) {
+    char c = out.data[i];
+    if (c != '\n' && c != '\r' && c != '\0') {
+      found = true;
+      break;
+    }
   }
-  if (pid == 0) {
-    dup2(pipe_fds[1], STDOUT_FILENO);
-    close(pipe_fds[0]);
-    close(pipe_fds[1]);
-    int devnull = open("/dev/null", O_WRONLY);
-    dup2(devnull, STDERR_FILENO);
-    close(devnull);
-    char *args[] = {"playerctl", "-l", NULL};
-    execvp("playerctl", args);
-    _exit(1);
-  }
-  close(pipe_fds[1]);
-  char buf[128];
-  ssize_t n = read(pipe_fds[0], buf, sizeof(buf) - 1);
-  close(pipe_fds[0]);
-  int w;
-  waitpid(pid, &w, 0);
-  if (n <= 0)
-    return false;
-  buf[n] = '\0';
-  for (ssize_t i = 0; i < n; i++) {
-    if (buf[i] != '\n' && buf[i] != '\0')
-      return true;
-  }
-  return false;
+
+  command_output_free(&out);
+  return found;
 }
 
 static void mpris_cleanup(void) {
   if (ctrl_pid > 0) {
-    kill(ctrl_pid, SIGKILL);
+    int status;
+    pid_t ret;
+    do {
+      ret = waitpid(ctrl_pid, &status, WNOHANG);
+    } while (ret == -1 && errno == EINTR);
+    if (ret == 0)
+      kill(ctrl_pid, SIGKILL);
     ctrl_pid = -1;
   }
 }
@@ -161,9 +187,7 @@ static PlayerBackend mpris_backend = {
     .seek = mpris_seek,
     .spawn_stream = mpris_spawn_stream,
     .has_player = mpris_has_player,
-    .get_metadata = NULL,
-    .get_status = NULL,
-    .set_volume = NULL,
+    .reap_child = mpris_reap_child,
     .cleanup = mpris_cleanup,
 };
 

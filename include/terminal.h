@@ -1,7 +1,7 @@
 #ifndef TERMINAL_H
 #define TERMINAL_H
 
-void init_terminal(void);
-void cleanup_terminal(int sig);
+void init_ui(void);
+void cleanup_ui(void);
 
 #endif

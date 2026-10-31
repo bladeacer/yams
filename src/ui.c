@@ -16,6 +16,7 @@
 #include "art_manager.h"
 #include "render_utils.h"
 #include "metadata.h"
+#include "subprocess.h"
 #include "utils.h"
 #include "debug.h"
 #include "config.h"
@@ -31,60 +32,104 @@ void show_status_msg(const char *msg) {
     status_msg_time = get_ms();
 }
 
-void draw_dashboard() {
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
+typedef struct {
+    char last_title[512];
+    char last_artist[512];
+    bool art_update_requested;
+    bool was_active;
+} DashboardState;
 
-    static char last_known_title[512] = {0};
-    static char last_known_artist[512] = {0};
-    static bool art_update_requested = false;
-    static bool was_active = false;
+static DashboardState dashboard;
 
-    char snap_status[64];
-    char snap_title[512];
-    char snap_artist[512];
-    char snap_art_url[2048];
-    char snap_path[2048];
-    strncpy(snap_status, m.status, sizeof(snap_status) - 1); snap_status[sizeof(snap_status) - 1] = '\0';
-    strncpy(snap_title, m.title, sizeof(snap_title) - 1); snap_title[sizeof(snap_title) - 1] = '\0';
-    strncpy(snap_artist, m.artist, sizeof(snap_artist) - 1); snap_artist[sizeof(snap_artist) - 1] = '\0';
-    strncpy(snap_art_url, m.art_url, sizeof(snap_art_url) - 1); snap_art_url[sizeof(snap_art_url) - 1] = '\0';
-    strncpy(snap_path, m.file_path, sizeof(snap_path) - 1); snap_path[sizeof(snap_path) - 1] = '\0';
+static void draw_status_line(void) {
+    long now = get_ms();
+    int my, mx;
+    getmaxyx(stdscr, my, mx);
 
+    if (status_msg[0] && now - status_msg_time > 3000) {
+        status_msg[0] = '\0';
+        mvwprintw(stdscr, my - 1, 1, "%*s", mx - 2, "");
+        wnoutrefresh(stdscr);
+    } else if (status_msg[0]) {
+        mvwprintw(stdscr, my - 1, 1, "%-*s", mx - 2, status_msg);
+        wnoutrefresh(stdscr);
+    }
+}
+
+static void check_layout_change(int max_x, int max_y) {
     if (max_x != geo.max_x || max_y != geo.max_y) {
         recreate_layout();
         clearok(curscr, TRUE);
         resize_pending = true;
-        was_active = false;
+        dashboard.was_active = false;
     }
+}
 
-    bool player_active = (snap_status[0] != '\0' && snap_status[0] != 'S');
-
-    if (player_active && !was_active) {
+static void update_player_activity(bool player_active) {
+    if (player_active && !dashboard.was_active) {
         clear_art_area();
         werase(main_win);
-        if (!art_update_requested)
+        if (!dashboard.art_update_requested)
             reset_art();
-    } else if (!player_active && was_active) {
+    } else if (!player_active && dashboard.was_active) {
         clear_art_area();
         werase(main_win);
         reset_art();
     }
+}
 
-    bool identity_changed = (strcmp(snap_title, last_known_title) != 0 ||
-                         strcmp(snap_artist, last_known_artist) != 0);
+static void update_identity(const MetadataSnap *snap) {
+    bool identity_changed = (strcmp(snap->title, dashboard.last_title) != 0 ||
+                             strcmp(snap->artist, dashboard.last_artist) != 0);
 
-    if (identity_changed && (snap_title[0] || snap_artist[0])) {
-        strncpy(last_known_title, snap_title, sizeof(last_known_title)-1);
-        strncpy(last_known_artist, snap_artist, sizeof(last_known_artist)-1);
+    if (identity_changed && (snap->title[0] || snap->artist[0])) {
+        strncpy(dashboard.last_title, snap->title, sizeof(dashboard.last_title) - 1);
+        strncpy(dashboard.last_artist, snap->artist, sizeof(dashboard.last_artist) - 1);
         reset_art();
-        art_update_requested = true;
+        dashboard.art_update_requested = true;
     }
 
     if (art_refresh_requested) {
-        art_update_requested = true;
+        dashboard.art_update_requested = true;
         art_refresh_requested = false;
     }
+}
+
+static void render_new_art(const MetadataSnap *snap) {
+    long now = get_ms();
+    long elapsed = now - get_last_metadata_change_time();
+    bool song_changed = (dashboard.art_update_requested && elapsed >= get_art_debounce());
+
+    if (!song_changed && !is_retry_pending())
+        return;
+
+    const char *art_src = (strlen(snap->art_url) > 5) ? snap->art_url : snap->file_path;
+    char title_sig[2048];
+    snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(snap->title),
+             safe_str(snap->artist));
+
+    update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, false);
+
+    replay_art_buffer();
+
+    dashboard.art_update_requested = false;
+    resize_pending = false;
+}
+
+void draw_dashboard() {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    MetadataSnap snap;
+    snapshot_metadata(&snap);
+
+    check_layout_change(max_x, max_y);
+
+    bool player_active = (snap.status[0] != '\0' && snap.status[0] != 'S');
+    bool was_active = dashboard.was_active;
+
+    update_player_activity(player_active);
+    update_identity(&snap);
 
     if (!player_active) {
         draw_fallback_screen(main_win, geo.max_y - 2, geo.max_x - 2);
@@ -103,20 +148,7 @@ void draw_dashboard() {
         }
     }
 
-    {
-        long now = get_ms();
-        int my, mx;
-        getmaxyx(stdscr, my, mx);
-        if (status_msg[0] && now - status_msg_time > 3000) {
-            status_msg[0] = '\0';
-            mvwprintw(stdscr, my - 1, 1, "%*s", mx - 2, "");
-            wnoutrefresh(stdscr);
-        } else if (status_msg[0]) {
-            mvwprintw(stdscr, my - 1, 1, "%-*s", mx - 2, status_msg);
-            wnoutrefresh(stdscr);
-        }
-    }
-
+    draw_status_line();
     doupdate();
 
     if (player_active)
@@ -125,231 +157,225 @@ void draw_dashboard() {
     if (!player_active)
         resize_pending = false;
 
-    if (player_active) {
-        long now = get_ms();
-        long elapsed = now - get_last_metadata_change_time();
+    if (player_active)
+        render_new_art(&snap);
 
-        bool song_changed = (art_update_requested && elapsed >= get_art_debounce());
-
-        if (song_changed || is_retry_pending()) {
-            const char *art_src = (strlen(snap_art_url) > 5) ? snap_art_url : snap_path;
-            char title_sig[2048];
-            snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(snap_title), safe_str(snap_artist));
-
-            update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, false);
-
-            replay_art_buffer();
-
-            art_update_requested = false;
-            resize_pending = false;
-        }
-    }
-
-    was_active = player_active;
+    dashboard.was_active = player_active;
 }
 
-void show_art_mode_selector(void) {
+
+static bool fuzzy_match(const char *pattern, const char *text) {
+    while (*text && *pattern) {
+        if (tolower((unsigned char)*text) == tolower((unsigned char)*pattern))
+            pattern++;
+        text++;
+    }
+    return *pattern == '\0';
+}
+
+static int matched_position(const int *matched, int count, int current) {
+    for (int i = 0; i < count; i++) {
+        if (matched[i] == current) return i;
+    }
+    return -1;
+}
+
+/* Shared modal list selector. Returns the selected index, or -1 on cancel. */
+static int run_list_selector(const char *title, const char *const *items,
+                             int count, int initial, bool filterable) {
+    if (!items || count <= 0) return -1;
+
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
     int vis_rows = max_y - 7;
-    if (vis_rows > ART_MODE_COUNT) vis_rows = ART_MODE_COUNT;
+    if (vis_rows > count) vis_rows = count;
     if (vis_rows > max_y - 6) vis_rows = max_y - 6;
     if (vis_rows < 1) vis_rows = 1;
 
-    int w = max_x < 44 ? max_x : 44;
-    int h = vis_rows + 6;
-    if (h > max_y) h = max_y;
-    if (w < 10 || h < 6) {
-        show_status_msg("Terminal too small");
-        return;
+    int min_w = (int)strlen(title) + 6;
+    for (int i = 0; i < count; i++) {
+        int item_w = (int)strlen(items[i]) + 6;
+        if (item_w > min_w) min_w = item_w;
     }
+    if (min_w > 50) min_w = 50;
+    if (min_w < 30) min_w = 30;
+    int w = max_x < min_w ? max_x : min_w;
+    int h = vis_rows + (filterable ? 6 : 5);
+    if (h > max_y) h = max_y;
+    if (w < 10 || h < 5) {
+        show_status_msg("Terminal too small");
+        return -1;
+    }
+
     int sy = (max_y - h) / 2;
     int sx = (max_x - w) / 2;
-
-    WINDOW *mwin = newwin(h, w, sy, sx);
-    if (!mwin) {
-        show_status_msg("Could not open art mode selector");
-        return;
+    WINDOW *win = newwin(h, w, sy, sx);
+    if (!win) {
+        show_status_msg("Could not open selector");
+        return -1;
     }
-    PANEL *mpanel = new_panel(mwin);
-    if (!mpanel) {
-        delwin(mwin);
-        show_status_msg("Could not open art mode selector");
-        return;
+    PANEL *panel = new_panel(win);
+    if (!panel) {
+        delwin(win);
+        show_status_msg("Could not open selector");
+        return -1;
     }
 
-    wbkgd(mwin, COLOR_PAIR(3));
-    keypad(mwin, TRUE);
-    wtimeout(mwin, 100);
+    int *matched = malloc(sizeof(int) * (size_t)count);
+    if (!matched) {
+        del_panel(panel);
+        delwin(win);
+        show_status_msg("Out of memory");
+        return -1;
+    }
+    for (int i = 0; i < count; i++) matched[i] = i;
+
+    wbkgd(win, COLOR_PAIR(3));
+    keypad(win, TRUE);
+    wtimeout(win, 100);
     curs_set(1);
 
+    int match_count = count;
+    int current = (initial >= 0 && initial < count) ? initial : 0;
     int scroll = 0;
-    int current = get_art_mode();
-
     char filter[64] = {0};
     int filter_len = 0;
-
-    int matched[ART_MODE_COUNT];
-    int match_count = ART_MODE_COUNT;
-    for (int i = 0; i < ART_MODE_COUNT; i++) matched[i] = i;
+    int result = -1;
 
     while (true) {
         if (exit_requested) break;
 
-        if (filter_len == 0) {
-            match_count = ART_MODE_COUNT;
-            for (int i = 0; i < ART_MODE_COUNT; i++) matched[i] = i;
-        } else {
-            match_count = 0;
-            for (int i = 0; i < ART_MODE_COUNT; i++) {
-                const char *p = art_modes[i].name;
-                const char *f = filter;
-                while (*p && *f) {
-                    if (tolower((unsigned char)*p) == tolower((unsigned char)*f)) {
-                        f++;
-                    }
-                    p++;
-                }
-                if (*f == '\0') {
-                    matched[match_count++] = i;
+        if (filterable) {
+            if (filter_len == 0) {
+                match_count = count;
+                for (int i = 0; i < count; i++) matched[i] = i;
+            } else {
+                match_count = 0;
+                for (int i = 0; i < count; i++) {
+                    if (fuzzy_match(filter, items[i]))
+                        matched[match_count++] = i;
                 }
             }
-            if (current >= ART_MODE_COUNT) current = 0;
+            if (match_count == 1) current = matched[0];
         }
 
-        if (match_count == 1) {
-            current = matched[0];
-        }
-
-        int sel_idx = -1;
-        for (int i = 0; i < match_count; i++) {
-            if (matched[i] == current) { sel_idx = i; break; }
-        }
+        int sel_idx = matched_position(matched, match_count, current);
         if (sel_idx < 0 && match_count > 0) {
             current = matched[0];
             sel_idx = 0;
         }
 
-        if (sel_idx < scroll) scroll = sel_idx;
-        if (sel_idx >= scroll + vis_rows) scroll = sel_idx - vis_rows + 1;
+        if (sel_idx >= 0) {
+            if (sel_idx < scroll) scroll = sel_idx;
+            if (sel_idx >= scroll + vis_rows) scroll = sel_idx - vis_rows + 1;
+        } else {
+            scroll = 0;
+        }
 
-        werase(mwin);
-        box(mwin, 0, 0);
-        mvwprintw(mwin, 0, 2, " Art Mode ");
+        werase(win);
+        box(win, 0, 0);
+        mvwprintw(win, 0, 2, " %s ", title);
 
         int line = 1;
         for (int i = scroll; i < match_count && line <= vis_rows; i++, line++) {
-            int mid = matched[i];
-            if (mid == current) {
-                wattron(mwin, A_REVERSE);
-                mvwprintw(mwin, line, 2, "%s", art_modes[mid].name);
-                int pad = w - 4 - (int)strlen(art_modes[mid].name);
-                if (pad > 0) mvwprintw(mwin, line, 2 + (int)strlen(art_modes[mid].name), "%*s", pad, "");
-                wattroff(mwin, A_REVERSE);
+            int idx = matched[i];
+            if (idx == current) {
+                wattron(win, A_REVERSE);
+                mvwprintw(win, line, 2, "%s", items[idx]);
+                int pad = w - 4 - (int)strlen(items[idx]);
+                if (pad > 0)
+                    mvwprintw(win, line, 2 + (int)strlen(items[idx]), "%*s", pad, "");
+                wattroff(win, A_REVERSE);
             } else {
-                mvwprintw(mwin, line, 2, "%s", art_modes[mid].name);
+                mvwprintw(win, line, 2, "%s", items[idx]);
             }
         }
 
-        mvwprintw(mwin, h - 5, 2, "arrows/vim  scroll  ENTER select");
-        mvwprintw(mwin, h - 4, 2, "ESC quit  Type to filter");
+        if (match_count == 0)
+            mvwprintw(win, 1, 2, "(no matches)");
 
-        mvwprintw(mwin, h - 3, 2, "Filter: ");
-        if (filter_len > 0) {
-            int max_fw = w - 12;
-            int vis_len = filter_len;
-            int start = 0;
-            if (vis_len > max_fw) {
-                start = vis_len - max_fw;
-                vis_len = max_fw;
+        if (filterable) {
+            mvwprintw(win, h - 5, 2, "arrows/vim  scroll  ENTER select");
+            mvwprintw(win, h - 4, 2, "ESC quit  Type to filter");
+            mvwprintw(win, h - 3, 2, "Filter: ");
+            if (filter_len > 0) {
+                int max_fw = w - 12;
+                int vis_len = filter_len;
+                int start = 0;
+                if (vis_len > max_fw) {
+                    start = vis_len - max_fw;
+                    vis_len = max_fw;
+                }
+                wattron(win, A_BOLD);
+                mvwprintw(win, h - 3, 10, "%.*s", vis_len, filter + start);
+                wattroff(win, A_BOLD);
             }
-            wattron(mwin, A_BOLD);
-            mvwprintw(mwin, h - 3, 10, "%.*s", vis_len, filter + start);
-            wattroff(mwin, A_BOLD);
-        }
-
-        if (match_count == 0) {
-            mvwprintw(mwin, 1, 2, "(no matches)");
+        } else {
+            mvwprintw(win, h - 4, 2, "arrows/vim  scroll  ENTER select");
+            mvwprintw(win, h - 3, 2, "ESC  quit");
         }
 
         update_panels();
         doupdate();
 
-        int ch = wgetch(mwin);
-        if (ch == 27 || ch == 'q') {
-            if (filter_len > 0) {
+        int ch = wgetch(win);
+        if (ch == ERR) continue;
+        if (ch == KEY_RESIZE || ch == 410) {
+            resize_pending = true;
+            break;
+        }
+        if (ch == 27) {
+            if (filterable && filter_len > 0) {
                 filter[0] = '\0';
                 filter_len = 0;
                 continue;
             }
             break;
-        } else if (ch == '\n' || ch == KEY_ENTER || ch == '\r') {
-            if (match_count > 0) {
-                set_art_mode(current);
-            }
+        }
+        if (ch == 'q' && (!filterable || filter_len == 0))
             break;
-        } else if (ch == KEY_UP || ch == 'k' || ch == 16) {
-            if (match_count > 0) {
-                for (int i = 0; i < match_count; i++) {
-                    if (matched[i] == current) {
-                        if (i > 0) { current = matched[i - 1]; }
-                        break;
-                    }
-                }
-            }
+        if (ch == '\n' || ch == KEY_ENTER || ch == '\r') {
+            if (match_count > 0) result = current;
+            break;
+        }
+
+        int pos = matched_position(matched, match_count, current);
+        if (ch == KEY_UP || ch == 'k' || ch == 16) {
+            if (pos > 0) current = matched[pos - 1];
         } else if (ch == KEY_DOWN || ch == 'j' || ch == 14) {
-            if (match_count > 0) {
-                for (int i = 0; i < match_count; i++) {
-                    if (matched[i] == current) {
-                        if (i < match_count - 1) { current = matched[i + 1]; }
-                        break;
-                    }
-                }
-            }
+            if (pos >= 0 && pos < match_count - 1) current = matched[pos + 1];
         } else if (ch == KEY_PPAGE) {
-            if (match_count > 0) {
-                for (int i = 0; i < match_count; i++) {
-                    if (matched[i] == current) {
-                        int ni = i - vis_rows;
-                        if (ni < 0) ni = 0;
-                        current = matched[ni];
-                        break;
-                    }
-                }
+            if (pos >= 0) {
+                int next = pos - vis_rows;
+                if (next < 0) next = 0;
+                current = matched[next];
             }
         } else if (ch == KEY_NPAGE) {
-            if (match_count > 0) {
-                for (int i = 0; i < match_count; i++) {
-                    if (matched[i] == current) {
-                        int ni = i + vis_rows;
-                        if (ni >= match_count) ni = match_count - 1;
-                        current = matched[ni];
-                        break;
-                    }
-                }
+            if (pos >= 0) {
+                int next = pos + vis_rows;
+                if (next >= match_count) next = match_count - 1;
+                current = matched[next];
             }
-        } else if (ch == 8 || ch == 127 || ch == KEY_BACKSPACE) {
-            if (filter_len > 0) {
+        } else if (filterable && (ch == 8 || ch == 127 || ch == KEY_BACKSPACE)) {
+            if (filter_len > 0)
                 filter[--filter_len] = '\0';
-            }
-        } else if (ch >= 32 && ch <= 126) {
+        } else if (filterable && ch >= 32 && ch <= 126) {
             if (filter_len < (int)sizeof(filter) - 1) {
                 filter[filter_len++] = (char)ch;
                 filter[filter_len] = '\0';
             }
-        } else if (ch == 21) {
+        } else if (filterable && ch == 21) {
             filter[0] = '\0';
             filter_len = 0;
         }
     }
 
-    del_panel(mpanel);
-    delwin(mwin);
+    free(matched);
+    del_panel(panel);
+    delwin(win);
     curs_set(0);
-
-    reset_art();
-    resize_pending = true;
+    return result;
 }
 
 static void free_player_list(char **list, int count) {
@@ -360,39 +386,19 @@ static void free_player_list(char **list, int count) {
 
 static char **fetch_player_list(int *count) {
     *count = 0;
-    int pipe_fds[2];
-    if (pipe(pipe_fds) == -1) return NULL;
-
-    pid_t pid = fork();
-    if (pid == -1) { close(pipe_fds[0]); close(pipe_fds[1]); return NULL; }
-    if (pid == 0) {
-        dup2(pipe_fds[1], STDOUT_FILENO);
-        close(pipe_fds[0]);
-        close(pipe_fds[1]);
-        int devnull = open("/dev/null", O_WRONLY);
-        dup2(devnull, STDERR_FILENO);
-        close(devnull);
-        char *args[] = {"playerctl", "-l", NULL};
-        execvp("playerctl", args);
-        _exit(1);
+    char *const args[] = {"playerctl", "-l", NULL};
+    CommandOutput out;
+    if (!capture_command(args, &out))
+        return NULL;
+    if (out.len == 0) {
+        command_output_free(&out);
+        return NULL;
     }
-    close(pipe_fds[1]);
-
-    char buf[4096];
-    ssize_t total = 0;
-    ssize_t n;
-    while ((n = read(pipe_fds[0], buf + total, sizeof(buf) - 1 - (size_t)total)) > 0)
-        total += n;
-    close(pipe_fds[0]);
-    int w;
-    waitpid(pid, &w, 0);
-    if (total <= 0) return NULL;
-    buf[total] = '\0';
 
     char **list = NULL;
     int cap = 0;
     char *saveptr = NULL;
-    char *line = strtok_r(buf, "\n", &saveptr);
+    char *line = strtok_r(out.data, "\n", &saveptr);
     while (line) {
         if (line[0]) {
             if (*count >= cap) {
@@ -401,6 +407,7 @@ static char **fetch_player_list(int *count) {
                 if (!tmp) {
                     free_player_list(list, *count);
                     *count = 0;
+                    command_output_free(&out);
                     return NULL;
                 }
                 list = tmp;
@@ -410,6 +417,7 @@ static char **fetch_player_list(int *count) {
             if (!dup) {
                 free_player_list(list, *count);
                 *count = 0;
+                command_output_free(&out);
                 return NULL;
             }
             list[*count] = dup;
@@ -417,6 +425,7 @@ static char **fetch_player_list(int *count) {
         }
         line = strtok_r(NULL, "\n", &saveptr);
     }
+    command_output_free(&out);
     return list;
 }
 
@@ -429,12 +438,14 @@ void show_player_selector(void) {
     }
 
     const char *current = get_player_name();
-    int current_idx = (current[0] == '\0') ? 0 : -1;
-    if (current_idx == -1) {
+    int current_idx = 0;
+    if (current[0] != '\0') {
         for (int i = 0; i < count; i++) {
-            if (strcmp(players[i], current) == 0) { current_idx = i + 1; break; }
+            if (strcmp(players[i], current) == 0) {
+                current_idx = i + 1;
+                break;
+            }
         }
-        if (current_idx == -1) current_idx = 0;
     }
 
     int total_items = count + 1;
@@ -456,99 +467,30 @@ void show_player_selector(void) {
         }
     }
 
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-
-    int vis_rows = total_items < 10 ? total_items : 10;
-    if (vis_rows > max_y - 6) vis_rows = max_y - 6;
-    if (vis_rows < 1) vis_rows = 1;
-    int w = max_x < 40 ? max_x : 40;
-    int h = vis_rows + 6;
-    if (h > max_y) h = max_y;
-    if (w < 8 || h < 6) {
-        free_player_list(labels, total_items);
-        free_player_list(players, count);
-        show_status_msg("Terminal too small");
-        return;
+    int sel = run_list_selector("Select Player", (const char *const *)labels,
+                                total_items, current_idx, false);
+    if (sel == 0) {
+        set_player_name("");
+    } else if (sel > 0) {
+        set_player_name(players[sel - 1]);
     }
-    int sy = (max_y - h) / 2;
-    int sx = (max_x - w) / 2;
-
-    WINDOW *pwin = newwin(h, w, sy, sx);
-    if (!pwin) {
-        free_player_list(labels, total_items);
-        free_player_list(players, count);
-        show_status_msg("Could not open player selector");
-        return;
-    }
-    PANEL *ppanel = new_panel(pwin);
-    if (!ppanel) {
-        delwin(pwin);
-        free_player_list(labels, total_items);
-        free_player_list(players, count);
-        show_status_msg("Could not open player selector");
-        return;
-    }
-    wbkgd(pwin, COLOR_PAIR(3));
-    keypad(pwin, TRUE);
-    wtimeout(pwin, 100);
-    curs_set(1);
-
-    int scroll = 0;
-    int sel = current_idx;
-    if (sel < 0) sel = 0;
-
-    while (1) {
-        if (exit_requested) break;
-
-        if (sel < scroll) scroll = sel;
-        if (sel >= scroll + vis_rows) scroll = sel - vis_rows + 1;
-
-        werase(pwin);
-        box(pwin, 0, 0);
-        mvwprintw(pwin, 0, 2, " Select Player ");
-
-        for (int i = scroll; i < total_items && i - scroll < vis_rows; i++) {
-            int line = 1 + i - scroll;
-            if (i == sel) {
-                wattron(pwin, A_REVERSE);
-                mvwprintw(pwin, line, 2, "%s", labels[i]);
-                int pad = w - 4 - (int)strlen(labels[i]);
-                if (pad > 0) mvwprintw(pwin, line, 2 + (int)strlen(labels[i]), "%*s", pad, "");
-                wattroff(pwin, A_REVERSE);
-            } else {
-                mvwprintw(pwin, line, 2, "%s", labels[i]);
-            }
-        }
-
-        mvwprintw(pwin, h - 4, 2, "arrows/vim  scroll  ENTER select");
-        mvwprintw(pwin, h - 3, 2, "ESC  quit");
-
-        update_panels();
-        doupdate();
-
-        int ch = wgetch(pwin);
-        if (ch == 27 || ch == 'q') break;
-        if (ch == '\n' || ch == KEY_ENTER || ch == '\r') {
-            if (sel == 0) {
-                set_player_name("");
-            } else {
-                set_player_name(players[sel - 1]);
-            }
-            break;
-        }
-        if ((ch == KEY_UP || ch == 'k') && sel > 0) sel--;
-        if ((ch == KEY_DOWN || ch == 'j') && sel < total_items - 1) sel++;
-        if (ch == KEY_PPAGE) sel = sel - vis_rows > 0 ? sel - vis_rows : 0;
-        if (ch == KEY_NPAGE) sel = sel + vis_rows < total_items - 1 ? sel + vis_rows : total_items - 1;
-    }
-
-    del_panel(ppanel);
-    delwin(pwin);
-    curs_set(0);
 
     free_player_list(players, count);
     free_player_list(labels, total_items);
+
+    reset_art();
+    resize_pending = true;
+}
+
+void show_art_mode_selector(void) {
+    const char *names[ART_MODE_COUNT];
+    for (int i = 0; i < ART_MODE_COUNT; i++)
+        names[i] = art_modes[i].name;
+
+    int sel = run_list_selector("Art Mode", names, ART_MODE_COUNT,
+                                get_art_mode(), true);
+    if (sel >= 0)
+        set_art_mode(sel);
 
     reset_art();
     resize_pending = true;

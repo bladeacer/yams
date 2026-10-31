@@ -15,6 +15,28 @@ void clear_metadata() {
     lyric_storage_bin[0] = '\0';
 }
 
+static void copy_snap_field(char *dst, size_t size, const char *src) {
+    if (size == 0) return;
+    strncpy(dst, src, size - 1);
+    dst[size - 1] = '\0';
+}
+
+void snapshot_metadata(MetadataSnap *snap) {
+    if (!snap) return;
+    memset(snap, 0, sizeof(*snap));
+    snap->lyric_count = m.lyric_count;
+    copy_snap_field(snap->status, sizeof(snap->status), m.status);
+    copy_snap_field(snap->player, sizeof(snap->player), m.player);
+    copy_snap_field(snap->length_str, sizeof(snap->length_str), m.length_str);
+    copy_snap_field(snap->title, sizeof(snap->title), m.title);
+    copy_snap_field(snap->artist, sizeof(snap->artist), m.artist);
+    copy_snap_field(snap->album, sizeof(snap->album), m.album);
+    copy_snap_field(snap->genre, sizeof(snap->genre), m.genre);
+    copy_snap_field(snap->composer, sizeof(snap->composer), m.composer);
+    copy_snap_field(snap->art_url, sizeof(snap->art_url), m.art_url);
+    copy_snap_field(snap->file_path, sizeof(snap->file_path), m.file_path);
+}
+
 bool parse_block(char *block) {
     if (!block || *block == '\0') return false;
 

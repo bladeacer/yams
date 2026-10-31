@@ -47,7 +47,7 @@ reaction while open.
 Fix: clamp dialog size to current `getmaxyx`, NULL-check `newwin`, and bail or redraw
 on failure. Also verify the art selector (src/ui.c:151-336, w=44) has the same clamping.
 
-- [ ] **6. Unchecked fork/dup2/library returns**
+- [x] **6. Unchecked fork/dup2/library returns**
 Context:
 - `run_cmd` (src/player_backend_mpris.c:18-44): `fork() == -1` ignored (child block runs
   nothing, parent sets ctrl_pid wrongly on success path only, alloc failure means no op).
@@ -58,7 +58,7 @@ Context:
 - `sws_scale` result ignored (src/art.c:190).
 Fix: check returns, loop reads until EOF in `mpris_has_player`, log or handle child status.
 
-- [ ] **7. Main loop robustness**
+- [x] **7. Main loop robustness**
 Context: `select` (src/main.c:635-641) breaks the process silently on any non-EINTR error.
 Control commands reaped only opportunistically: `reap_ctrl` (src/player_backend_mpris.c:11-16)
 runs only when the next command fires, so `playerctl next` children can linger as zombies
@@ -69,7 +69,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
 
 ## P1: Code health
 
-- [ ] **8. Remove dead code**
+- [x] **8. Remove dead code**
 - `is_art_active` (src/art_manager.c:41-43) and `get_last_render_time` (37-39), declared in
   include/art_manager.h but never called anywhere.
 - PlayerBackend vestigial fields: `get_metadata`, `get_status`, `set_volume` (declared in
@@ -80,7 +80,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
   real functions are `init_ui`/`cleanup_ui` (src/terminal.c:9,39). Fix the header names.
 - `query_initial_metadata` (src/main.c:62-66) ignores its `fmt` param, pure indirection.
 
-- [ ] **9. Unify duplicated logic**
+- [x] **9. Unify duplicated logic**
 - `is_remote` (src/art_manager.c:29-31) is byte-identical to `is_remote_url` (src/art.c:374-376).
   Keep one in a shared header.
 - Data-URI stripping exists twice: `strip_data_art` (src/main.c:68-82) for complete blocks,
@@ -99,7 +99,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
   (player_backend_mpris.c:113-148) both fork/exec playerctl -l. Share one capture helper
   with proper read-until-EOF.
 
-- [ ] **10. Split long functions**
+- [x] **10. Split long functions**
 - `extract_frame` (src/art.c:25-204): fail-path teardown repeated 9 times; convert to goto
   cleanup pattern.
 - `show_art_mode_selector` (src/ui.c:151-336): extract filter matching, item rendering,

@@ -13,7 +13,6 @@
 static char last_art_path[4096] = {0};
 static char last_title_sig[2048] = {0};
 static long last_metadata_change_time = 0;
-static long last_render_time = 0;
 
 static char *art_buffer = NULL;
 static size_t art_buffer_len = 0;
@@ -26,20 +25,8 @@ static const int retry_delays[] = {1000, 2000, 5000, 10000, 30000};
 
 bool art_refresh_requested = false;
 
-static bool is_remote(const char *url) {
-    return strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0;
-}
-
 long get_last_metadata_change_time(void) {
     return last_metadata_change_time;
-}
-
-long get_last_render_time(void) {
-    return last_render_time;
-}
-
-bool is_art_active(void) {
-    return (art_buffer != NULL);
 }
 
 bool is_retry_pending(void) {
@@ -75,21 +62,21 @@ void replay_art_buffer(void) {
     }
 }
 
-static char *make_fallback(int x, int y, int w, int h) {
+static char *make_art_message(int x, int y, int w, int h, const char *msg) {
     char *buf = malloc(4096);
     if (!buf) return NULL;
     int pos = 0;
     char clear[128];
     int cw = w < 126 ? w : 126;
-    memset(clear, ' ', cw);
+    if (cw < 0) cw = 0;
+    memset(clear, ' ', (size_t)cw);
     clear[cw] = '\0';
     for (int r = 0; r < h && pos < 4090; r++)
         pos += snprintf(buf + pos, (size_t)(4096 - pos),
                         "\x1b[%d;%dH%s", y + 1 + r, x + 1, clear);
-    snprintf(buf + pos, (size_t)(4096 - pos),
-             "\x1b[%d;%dH No album art [%s]",
-             y + h / 2, x + 2,
-             art_modes[get_art_mode()].name);
+    if (msg && pos < 4095)
+        snprintf(buf + pos, (size_t)(4096 - pos),
+                 "\x1b[%d;%dH%s", y + h / 2, x + 2, msg);
     return buf;
 }
 
@@ -115,7 +102,7 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
         last_art_path[sizeof(last_art_path)-1] = '\0';
         strncpy(last_title_sig, sig, sizeof(last_title_sig)-1);
         last_title_sig[sizeof(last_title_sig)-1] = '\0';
-        if (path_changed && is_remote(src)) {
+        if (path_changed && is_remote_url(src)) {
             DBG("  setting retry for remote url: [%s]", src);
             strncpy(retry_src, src, sizeof(retry_src)-1);
             retry_src[sizeof(retry_src)-1] = '\0';
@@ -155,32 +142,24 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
         } else {
             DBG("  render_art_to_buffer FAILED (returned NULL)");
             bool had_retry = (retry_src[0] != '\0');
-            new_buf = make_fallback(2, 1, w, h);
-            if (new_buf && had_retry) {
-                free(new_buf);
-                new_buf = malloc(4096);
-                if (new_buf) {
-                    int pos = 0, cw = w < 126 ? w : 126;
-                    char clear[128];
-                    memset(clear, ' ', cw); clear[cw] = '\0';
-                    for (int r = 0; r < h && pos < 4000; r++)
-                        pos += snprintf(new_buf + pos, 4096 - pos,
-                                       "\x1b[%d;%dH%s", 3 + r, 3, clear);
-                    snprintf(new_buf + pos, 4096 - pos,
-                             "\x1b[%d;%dH Retrying art... (attempt %d)",
-                             2 + h / 2, 4, retry_attempt + 1);
-                }
-            }
+            char msg[128];
+            if (had_retry)
+                snprintf(msg, sizeof(msg), " Retrying art... (attempt %d)",
+                         retry_attempt + 1);
+            else
+                snprintf(msg, sizeof(msg), " No album art [%s]",
+                         art_modes[get_art_mode()].name);
+            new_buf = make_art_message(2, 1, w, h, msg);
             if (new_buf) {
                 art_buffer = new_buf;
                 art_buffer_len = strlen(new_buf);
             }
-            if (is_remote(src) && strcmp(src, retry_src) == 0) {
+            if (is_remote_url(src) && strcmp(src, retry_src) == 0) {
                 int idx = retry_attempt < 5 ? retry_attempt : 4;
                 retry_at = now + retry_delays[idx];
                 retry_attempt++;
                 DBG("  scheduled retry at %ld (attempt %d)", retry_at, retry_attempt);
-            } else if (is_remote(src)) {
+            } else if (is_remote_url(src)) {
                 strncpy(retry_src, src, sizeof(retry_src)-1);
                 retry_src[sizeof(retry_src)-1] = '\0';
                 retry_attempt = 1;
@@ -188,6 +167,5 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
                 DBG("  first retry scheduled at %ld", retry_at);
             }
         }
-        last_render_time = get_ms();
     }
 }
