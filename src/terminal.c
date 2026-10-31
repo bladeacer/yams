@@ -36,10 +36,8 @@ void init_ui() {
     DBG("Terminal initialized: %dx%d", COLS, LINES);
 }
 
-void cleanup_ui(int sig) {
-    (void)sig;
+void cleanup_ui(void) {
     endwin();
     printf("\033[2J\033[H\033[?25h\033[0m");
     fflush(stdout);
-    exit(0);
 }

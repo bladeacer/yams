@@ -4,6 +4,7 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
+#include <libavutil/error.h>
 #include <libswscale/swscale.h>
 #include <math.h>
 #include <stdbool.h>
@@ -333,16 +334,14 @@ static void render_pixel_to_gs(uint8_t *pixels, int img_w, int img_h,
 static char *get_cache_dir(void) {
   const char *cache_base = getenv("XDG_CACHE_HOME");
   if (cache_base) {
-    char *dir;
-    int ret = asprintf(&dir, "%s/yams/art", cache_base);
-    if (ret > 0)
+    char *dir = NULL;
+    if (xasprintf(&dir, "%s/yams/art", cache_base) >= 0)
       return dir;
   }
   const char *home = getenv("HOME");
   if (home) {
-    char *dir;
-    int ret = asprintf(&dir, "%s/.cache/yams/art", home);
-    if (ret > 0)
+    char *dir = NULL;
+    if (xasprintf(&dir, "%s/.cache/yams/art", home) >= 0)
       return dir;
   }
   return strdup("/tmp/yams-art-cache");
@@ -377,11 +376,13 @@ static bool is_remote_url(const char *url) {
 
 static char *get_cached_path(const char *url) {
   char *cache_dir = get_cache_dir();
+  if (!cache_dir)
+    return NULL;
   ensure_dir(cache_dir);
   char *path = NULL;
-  asprintf(&path, "%s/%lx", cache_dir, hash_str(url));
+  int ret = xasprintf(&path, "%s/%lx", cache_dir, hash_str(url));
   free(cache_dir);
-  return path;
+  return ret >= 0 ? path : NULL;
 }
 
 static int cache_version = 0;
@@ -390,36 +391,76 @@ static bool download_to_cache(const char *url, const char *cache_path) {
   AVIOContext *io = NULL;
   if (avio_open(&io, url, AVIO_FLAG_READ) < 0)
     return false;
-  FILE *f = fopen(cache_path, "wb");
-  if (!f) {
+
+  /* Write to a sibling temp file and only rename after a clean EOF, so a
+   * partial or failed download never becomes a permanent cache hit. */
+  char *tmp_path = NULL;
+  if (xasprintf(&tmp_path, "%s.part.%ld", cache_path, (long)getpid()) < 0) {
     avio_close(io);
     return false;
   }
+
+  FILE *f = fopen(tmp_path, "wb");
+  if (!f) {
+    avio_close(io);
+    free(tmp_path);
+    return false;
+  }
+
   uint8_t buf[8192];
   int n;
+  size_t total = 0;
+  bool ok = true;
+
   while ((n = avio_read(io, buf, sizeof(buf))) > 0) {
-    if (fwrite(buf, 1, n, f) != (size_t)n) {
-      fclose(f);
-      avio_close(io);
-      unlink(cache_path);
-      return false;
+    if (fwrite(buf, 1, (size_t)n, f) != (size_t)n) {
+      ok = false;
+      break;
     }
+    total += (size_t)n;
   }
-  fclose(f);
-  avio_close(io);
+
+  /* A clean EOF is 0 or AVERROR_EOF; any other negative value is a read
+   * error and must not be committed. */
+  if (n < 0 && n != AVERROR_EOF)
+    ok = false;
+  if (total == 0)
+    ok = false;
+  if (fflush(f) != 0 || ferror(f))
+    ok = false;
+
+  if (fclose(f) != 0)
+    ok = false;
+  if (avio_close(io) < 0)
+    ok = false;
+
+  if (!ok) {
+    unlink(tmp_path);
+    free(tmp_path);
+    return false;
+  }
+
+  if (rename(tmp_path, cache_path) != 0) {
+    unlink(tmp_path);
+    free(tmp_path);
+    return false;
+  }
+
+  free(tmp_path);
   cache_version++;
   return true;
 }
 
 static char *format_size(double bytes) {
   char *s = NULL;
+  int ret;
   if (bytes < 1024.0)
-    asprintf(&s, "%.0f B", bytes);
+    ret = xasprintf(&s, "%.0f B", bytes);
   else if (bytes < 1024.0 * 1024.0)
-    asprintf(&s, "%.1f KB", bytes / 1024.0);
+    ret = xasprintf(&s, "%.1f KB", bytes / 1024.0);
   else
-    asprintf(&s, "%.1f MB", bytes / (1024.0 * 1024.0));
-  return s;
+    ret = xasprintf(&s, "%.1f MB", bytes / (1024.0 * 1024.0));
+  return ret >= 0 ? s : NULL;
 }
 
 char *get_cache_info(void) {
@@ -431,7 +472,7 @@ char *get_cache_info(void) {
 
   char *cache_dir = get_cache_dir();
   char *result = NULL;
-  DIR *d = opendir(cache_dir);
+  DIR *d = cache_dir ? opendir(cache_dir) : NULL;
   if (d) {
     struct dirent *entry;
     int count = 0;
@@ -440,7 +481,8 @@ char *get_cache_info(void) {
       if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
         continue;
       char *path = NULL;
-      asprintf(&path, "%s/%s", cache_dir, entry->d_name);
+      if (xasprintf(&path, "%s/%s", cache_dir, entry->d_name) < 0)
+        continue;
       struct stat st;
       if (stat(path, &st) == 0) {
         total += (double)st.st_size;
@@ -450,22 +492,29 @@ char *get_cache_info(void) {
     }
     closedir(d);
     char *size_str = format_size(total);
-    asprintf(&result, "Art cache: %s (%d file%s)", size_str, count,
-             count == 1 ? "" : "s");
+    if (xasprintf(&result, "Art cache: %s (%d file%s)",
+                  size_str ? size_str : "?", count, count == 1 ? "" : "s") < 0)
+      result = NULL;
     free(size_str);
   } else {
-    asprintf(&result, "Art cache: empty");
+    if (xasprintf(&result, "Art cache: empty") < 0)
+      result = NULL;
   }
   free(cache_dir);
-  snprintf(cached, sizeof(cached), "%s", result);
-  last_version = cache_version;
+
+  if (result) {
+    snprintf(cached, sizeof(cached), "%s", result);
+    last_version = cache_version;
+  } else {
+    cached[0] = '\0';
+  }
   return result;
 }
 
 char *clear_art_cache(void) {
   char *cache_dir = get_cache_dir();
   char *result = NULL;
-  DIR *d = opendir(cache_dir);
+  DIR *d = cache_dir ? opendir(cache_dir) : NULL;
   if (d) {
     struct dirent *entry;
     int removed = 0;
@@ -474,7 +523,8 @@ char *clear_art_cache(void) {
       if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
         continue;
       char *path = NULL;
-      asprintf(&path, "%s/%s", cache_dir, entry->d_name);
+      if (xasprintf(&path, "%s/%s", cache_dir, entry->d_name) < 0)
+        continue;
       struct stat st;
       if (stat(path, &st) == 0)
         freed += (double)st.st_size;
@@ -484,12 +534,15 @@ char *clear_art_cache(void) {
     }
     closedir(d);
     char *size_str = format_size(freed);
-    asprintf(&result, "Cleared %s (%d file%s)", size_str, removed,
-             removed == 1 ? "" : "s");
+    if (xasprintf(&result, "Cleared %s (%d file%s)",
+                  size_str ? size_str : "?", removed,
+                  removed == 1 ? "" : "s") < 0)
+      result = NULL;
     free(size_str);
     cache_version++;
   } else {
-    asprintf(&result, "Cache directory not found");
+    if (xasprintf(&result, "Cache directory not found") < 0)
+      result = NULL;
   }
   free(cache_dir);
   return result;

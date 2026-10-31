@@ -40,23 +40,56 @@ static PlayerBackend *backend = NULL;
 static bool process_metadata_stream(void);
 static void maintain_subprocesses(const char *fmt, long now);
 
-void handle_exit(int sig) {
+volatile sig_atomic_t exit_requested = 0;
+static volatile sig_atomic_t exit_signal = 0;
+static volatile sig_atomic_t cleanup_started = 0;
+
+/* Signal handlers must only touch sig_atomic_t state. All teardown happens in
+ * handle_exit() from the main loop. If a second signal arrives while cleanup is
+ * already running, fall back to the only async-signal-safe exit. */
+static void handle_exit_signal(int sig) {
+  if (cleanup_started)
+    _exit(128 + sig);
+  exit_signal = sig;
+  exit_requested = 1;
+}
+
+static void handle_winch(int sig) {
+  (void)sig;
+  resize_pending = true;
+}
+
+static void handle_exit(int sig) {
+  (void)sig;
+  cleanup_started = 1;
   DBG("handle_exit called with signal %d", sig);
-  if (player_fd != -1)
+  if (player_fd != -1) {
     close(player_fd);
-  if (metadata_pid > 0)
+    player_fd = -1;
+  }
+  if (metadata_pid > 0) {
     kill(metadata_pid, SIGKILL);
+    metadata_pid = -1;
+  }
   if (backend && backend->cleanup)
     backend->cleanup();
   free_art();
   close_debug();
-  cleanup_ui(sig);
+  cleanup_ui();
 }
 
-void handle_winch(int sig) {
-  (void)sig;
-  resize_pending = true;
-  last_resize_time = get_ms();
+static void install_signal_handlers(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0; /* let select() return EINTR so the main loop sees flags */
+
+  sa.sa_handler = handle_exit_signal;
+  sigaction(SIGINT, &sa, NULL);
+  sigaction(SIGTERM, &sa, NULL);
+
+  sa.sa_handler = handle_winch;
+  sigaction(SIGWINCH, &sa, NULL);
 }
 
 static bool query_initial_metadata(const char *fmt) {
@@ -129,18 +162,31 @@ void show_seek_input() {
   getmaxyx(stdscr, max_y, max_x);
 
   int h = 3, w = 30;
+  if (h > max_y)
+    h = max_y;
+  if (w > max_x)
+    w = max_x;
+  if (h < 2 || w < 6)
+    return;
+
   int sy = (max_y - h) / 2;
   int sx = (max_x - w) / 2;
 
   WINDOW *swin = newwin(h, w, sy, sx);
+  if (!swin)
+    return;
   PANEL *spanel = new_panel(swin);
+  if (!spanel) {
+    delwin(swin);
+    return;
+  }
 
   wbkgd(swin, COLOR_PAIR(3));
   box(swin, 0, 0);
   mvwprintw(swin, 0, 2, " Set Seek (sec) ");
 
   keypad(swin, TRUE);
-  nodelay(swin, FALSE);
+  wtimeout(swin, 100);
   curs_set(1);
 
   update_panels();
@@ -152,8 +198,53 @@ void show_seek_input() {
   const int field_y = 1;
 
   while (true) {
+    if (exit_requested) {
+      idx = 0;
+      break;
+    }
+
+    if (field_y >= h)
+      break;
+
+    if (resize_pending) {
+      struct winsize size;
+      if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
+        if (size.ws_row != LINES || size.ws_col != COLS)
+          resizeterm(size.ws_row, size.ws_col);
+        max_y = size.ws_row;
+        max_x = size.ws_col;
+      }
+      int nh = 3, nw = 30;
+      if (nh > max_y)
+        nh = max_y;
+      if (nw > max_x)
+        nw = max_x;
+      if (nh < 2 || nw < 6) {
+        idx = 0;
+        break;
+      }
+      h = nh;
+      w = nw;
+      wresize(swin, h, w);
+      mvwin(swin, (max_y - h) / 2, (max_x - w) / 2);
+      werase(swin);
+      wbkgd(swin, COLOR_PAIR(3));
+      box(swin, 0, 0);
+      mvwprintw(swin, 0, 2, " Set Seek (sec) ");
+      if (idx > 0)
+        mvwprintw(swin, field_y, field_x, "%s", input);
+      update_panels();
+      doupdate();
+      resize_pending = false;
+    }
+
     wmove(swin, field_y, field_x + idx);
     int ch = wgetch(swin);
+
+    if (ch == KEY_RESIZE || ch == 410) {
+      resize_pending = true;
+      continue;
+    }
 
     if (ch == 27) {
       idx = 0;
@@ -170,7 +261,8 @@ void show_seek_input() {
         input[idx] = '\0';
         mvwaddch(swin, field_y, field_x + idx, ' ');
       }
-    } else if (ch >= '0' && ch <= '9' && idx < (int)sizeof(input) - 1) {
+    } else if (ch >= '0' && ch <= '9' && idx < (int)sizeof(input) - 1 &&
+               field_x + idx < w - 1) {
       input[idx] = ch;
       mvwaddch(swin, field_y, field_x + idx, ch);
       idx++;
@@ -210,7 +302,7 @@ static void handle_keypress(int ch, long now) {
 
   switch (ch) {
   case 'q':
-    handle_exit(0);
+    exit_requested = 1;
     break;
   case ' ':
     backend->play_pause();
@@ -261,7 +353,14 @@ static void handle_keypress(int ch, long now) {
     char *info = get_cache_info();
     char *msg = clear_art_cache();
     char buf[512];
-    snprintf(buf, sizeof(buf), "%s  |  %s", info, msg);
+    if (info && msg)
+      snprintf(buf, sizeof(buf), "%s  |  %s", info, msg);
+    else if (info)
+      snprintf(buf, sizeof(buf), "%s", info);
+    else if (msg)
+      snprintf(buf, sizeof(buf), "%s", msg);
+    else
+      snprintf(buf, sizeof(buf), "Art cache unavailable");
     free(info);
     free(msg);
     show_status_msg(buf);
@@ -335,6 +434,47 @@ static void handle_keypress(int ch, long now) {
   }
 }
 
+static void draw_help_window(WINDOW *win, int h, int w) {
+  static const struct {
+    const char *key;
+    const char *desc;
+  } help_lines[] = {
+      {"q", "Quit Application"},   {"r", "Refresh"},
+      {"c", "Clear Art Cache"},    {"SPC", "Play / Pause"},
+      {"h/<-", "Previous Track"},  {"l/->", "Next Track"},
+      {"j/k", "Seek Interval"},    {"-/+", "Adjust Seek Interval"},
+      {"s", "Set Seek Interval"},  {"a", "Art Mode Selector"},
+      {"p", "Player Selector"},    {"ESC/?", "Close this menu"},
+  };
+  const int line_count = (int)(sizeof(help_lines) / sizeof(help_lines[0]));
+
+  werase(win);
+  wbkgd(win, COLOR_PAIR(3));
+  if (h < 2 || w < 2)
+    return;
+  box(win, 0, 0);
+
+  int title_x = (w - 10) / 2;
+  if (title_x < 1)
+    title_x = 1;
+  wattron(win, A_BOLD | COLOR_PAIR(4));
+  mvwprintw(win, 1, title_x, "YAMS HELP");
+  wattroff(win, A_BOLD | COLOR_PAIR(4));
+
+  if (h > 3 && w > 3)
+    mvwhline(win, 2, 1, ACS_HLINE, w - 2);
+
+  int ty = 4;
+  int tx = (w >= 34) ? 6 : 2;
+  for (int i = 0; i < line_count && ty < h - 1; i++, ty++) {
+    wattron(win, COLOR_PAIR(4) | A_BOLD);
+    mvwprintw(win, ty, tx, "%s", help_lines[i].key);
+    wattroff(win, COLOR_PAIR(4) | A_BOLD);
+    if (tx + 8 < w - 1)
+      mvwprintw(win, ty, tx + 8, "%s", help_lines[i].desc);
+  }
+}
+
 void show_help_overlay(long now) {
   if (help_active)
     return;
@@ -343,49 +483,68 @@ void show_help_overlay(long now) {
   int max_y, max_x;
   getmaxyx(stdscr, max_y, max_x);
 
-  int h = 17, w = 45;
+  int h = max_y < 17 ? max_y : 17;
+  int w = max_x < 45 ? max_x : 45;
+  if (h < 3 || w < 10) {
+    help_active = false;
+    return;
+  }
+
   int start_y = (max_y - h) / 2;
   int start_x = (max_x - w) / 2;
 
   WINDOW *help_win = newwin(h, w, start_y, start_x);
+  if (!help_win) {
+    help_active = false;
+    return;
+  }
   PANEL *help_panel = new_panel(help_win);
-
-  wbkgd(help_win, COLOR_PAIR(3));
-  box(help_win, 0, 0);
-
-  wattron(help_win, A_BOLD | COLOR_PAIR(4));
-  mvwprintw(help_win, 1, (w - 10) / 2, "YAMS HELP");
-  wattroff(help_win, A_BOLD | COLOR_PAIR(4));
-  mvwhline(help_win, 2, 1, ACS_HLINE, w - 2);
-
-  int ty = 4, tx = 6;
-#define HELP_L(k, d)                                                           \
-  {                                                                            \
-    wattron(help_win, COLOR_PAIR(4) | A_BOLD);                                 \
-    mvwprintw(help_win, ty, tx, k);                                            \
-    wattroff(help_win, COLOR_PAIR(4) | A_BOLD);                                \
-    mvwprintw(help_win, ty++, tx + 8, d);                                      \
+  if (!help_panel) {
+    delwin(help_win);
+    help_active = false;
+    return;
   }
 
-  HELP_L("q", "Quit Application");
-  HELP_L("r", "Refresh");
-  HELP_L("c", "Clear Art Cache");
-  HELP_L("SPC", "Play / Pause");
-  HELP_L("h/<-", "Previous Track");
-  HELP_L("l/->", "Next Track");
-  HELP_L("j/k", "Seek Interval");
-  HELP_L("-/+", "Adjust Seek Interval");
-  HELP_L("s", "Set Seek Interval");
-  HELP_L("a", "Art Mode Selector");
-  HELP_L("p", "Player Selector");
-  HELP_L("ESC/?", "Close this menu");
-
+  keypad(help_win, TRUE);
+  draw_help_window(help_win, h, w);
   update_panels();
   doupdate();
 
-  int ch;
-  nodelay(stdscr, FALSE);
+  wtimeout(help_win, 100);
+  bool redraw = false;
   while (true) {
+    if (exit_requested)
+      break;
+
+    if (resize_pending) {
+      struct winsize size;
+      if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
+        if (size.ws_row != LINES || size.ws_col != COLS)
+          resizeterm(size.ws_row, size.ws_col);
+        max_y = size.ws_row;
+        max_x = size.ws_col;
+      }
+      int nh = max_y < 17 ? max_y : 17;
+      int nw = max_x < 45 ? max_x : 45;
+      if (nh < 3 || nw < 10)
+        break;
+      if (nh != h || nw != w) {
+        h = nh;
+        w = nw;
+        wresize(help_win, h, w);
+        mvwin(help_win, (max_y - h) / 2, (max_x - w) / 2);
+        redraw = true;
+      }
+      resize_pending = false;
+    }
+
+    if (redraw) {
+      draw_help_window(help_win, h, w);
+      update_panels();
+      doupdate();
+      redraw = false;
+    }
+
     fd_set help_fds;
     FD_ZERO(&help_fds);
     FD_SET(STDIN_FILENO, &help_fds);
@@ -393,17 +552,27 @@ void show_help_overlay(long now) {
 
     int h_act = select(STDIN_FILENO + 1, &help_fds, NULL, NULL, &h_tv);
 
+    if (h_act < 0) {
+      if (errno == EINTR)
+        continue;
+      break;
+    }
+
     if (h_act > 0) {
-      ch = wgetch(help_win);
+      int ch = wgetch(help_win);
+      if (ch == ERR)
+        continue;
+      if (ch == KEY_RESIZE || ch == 410) {
+        resize_pending = true;
+        continue;
+      }
       if (ch == 27 || ch == '?' || ch == 'q')
         break;
       handle_keypress(ch, now);
-      update_panels();
-      doupdate();
+      redraw = true;
     }
   }
   nodelay(stdscr, TRUE);
-
   del_panel(help_panel);
   delwin(help_win);
 
@@ -562,13 +731,11 @@ int main() {
   setlocale(LC_ALL, "");
   if (getenv("YAMS_EXIT_IMMEDIATELY")) {
     init_ui();
-    cleanup_ui(0);
+    cleanup_ui();
     return 0;
   }
   init_debug();
-  signal(SIGINT, handle_exit);
-  signal(SIGTERM, handle_exit);
-  signal(SIGWINCH, handle_winch);
+  install_signal_handlers();
 
   init_ui();
   nodelay(stdscr, TRUE);
@@ -596,6 +763,9 @@ int main() {
   bool debounce_triggered = false;
 
   while (1) {
+    if (exit_requested)
+      break;
+
     long now = get_ms();
     long elapsed_since_change = now - get_last_metadata_change_time();
 
@@ -669,8 +839,6 @@ int main() {
     usleep(10000);
   }
 
-  draw_dashboard();
-
-  handle_exit(0);
+  handle_exit((int)exit_signal);
   return 0;
 }

@@ -5,7 +5,7 @@ Priorities: P0 = bugs first, P1 = health, testing, config, P2 = larger features.
 
 ## P0: Bug fixes and correctness
 
-### 1. Corrupt art cache poisoning
+- [x] **1. Corrupt art cache poisoning**
 Context: `download_to_cache` (src/art.c:389-412) loops on `avio_read` and exits the loop
 on any value <= 0. A network error or short body is indistinguishable from EOF, so a
 partial/failed download is written straight to the final cache path, and then acts as a
@@ -15,7 +15,7 @@ Fix: treat `n < 0` as failure, write to a temp path (same dir, distinct name) an
 into place only after a clean EOF, `unlink` on every early exit, and optionally sanity
 check minimum size or re-open with avformat before committing.
 
-### 2. Unchecked asprintf calls in art.c
+- [x] **2. Unchecked asprintf calls in art.c**
 Context: 9 call sites return unchecked: src/art.c:382 (`get_cached_path`),
 417, 419, 421 (`format_size`), 443, 453, 457, 477, 487, 492 (cache info and clear).
 On failure glibc returns -1 and leaves the pointer undefined, so `free(path)` and
@@ -24,13 +24,13 @@ On failure glibc returns -1 and leaves the pointer undefined, so `free(path)` an
 Fix: central `xasprintf` helper or per-site checks; also fix the two unchecked
 `asprintf`/`stat` paths in `get_cache_info` and `clear_art_cache`.
 
-### 3. Unchecked allocations in player list handling
+- [x] **3. Unchecked allocations in player list handling**
 Context: src/ui.c:374-379, `fetch_player_list` reallocs into the same `list` variable
 (leaks everything on failure), `strdup(line)` is unchecked and `*count` increments anyway.
 src/ui.c:404-407, `show_player_selector` mallocs `labels` and strdups items unchecked.
 Fix: temp pointer for realloc, bail cleanly on OOM, free already-collected entries.
 
-### 4. Non-async-signal-safe exit handler
+- [x] **4. Non-async-signal-safe exit handler**
 Context: `handle_exit` (src/main.c:43-54) is installed via `signal()` for SIGINT/SIGTERM
 (src/main.c:569-570) and calls `fprintf` (DBG), `free_art`, `endwin` and `exit(0)` (from
 `cleanup_ui`, src/terminal.c:39-45). All non-async-signal-safe, plus `exit(0)` runs from
@@ -39,7 +39,7 @@ also ignores its `sig` argument.
 Fix: `sigaction` handlers only set a sig_atomic_t flag; cleanup runs in the main loop
 before returning. Keep a tiny async-safe `_exit` fallback if cleanup itself faults.
 
-### 5. Fixed-size overlay dialogs crash on small terminals
+- [x] **5. Fixed-size overlay dialogs crash on small terminals**
 Context: help overlay uses hardcoded h=17, w=45 (src/main.c:346) and the seek dialog h=3,
 w=30 (src/main.c:135); `newwin` results are unchecked, so a terminal smaller than the
 dialog yields NULL passed to `wbkgd`/`box` and crashes. Overlays also have no resize
@@ -47,7 +47,7 @@ reaction while open.
 Fix: clamp dialog size to current `getmaxyx`, NULL-check `newwin`, and bail or redraw
 on failure. Also verify the art selector (src/ui.c:151-336, w=44) has the same clamping.
 
-### 6. Unchecked fork/dup2/library returns
+- [ ] **6. Unchecked fork/dup2/library returns**
 Context:
 - `run_cmd` (src/player_backend_mpris.c:18-44): `fork() == -1` ignored (child block runs
   nothing, parent sets ctrl_pid wrongly on success path only, alloc failure means no op).
@@ -58,7 +58,7 @@ Context:
 - `sws_scale` result ignored (src/art.c:190).
 Fix: check returns, loop reads until EOF in `mpris_has_player`, log or handle child status.
 
-### 7. Main loop robustness
+- [ ] **7. Main loop robustness**
 Context: `select` (src/main.c:635-641) breaks the process silently on any non-EINTR error.
 Control commands reaped only opportunistically: `reap_ctrl` (src/player_backend_mpris.c:11-16)
 runs only when the next command fires, so `playerctl next` children can linger as zombies
@@ -69,7 +69,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
 
 ## P1: Code health
 
-### 8. Remove dead code
+- [ ] **8. Remove dead code**
 - `is_art_active` (src/art_manager.c:41-43) and `get_last_render_time` (37-39), declared in
   include/art_manager.h but never called anywhere.
 - PlayerBackend vestigial fields: `get_metadata`, `get_status`, `set_volume` (declared in
@@ -80,7 +80,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
   real functions are `init_ui`/`cleanup_ui` (src/terminal.c:9,39). Fix the header names.
 - `query_initial_metadata` (src/main.c:62-66) ignores its `fmt` param, pure indirection.
 
-### 9. Unify duplicated logic
+- [ ] **9. Unify duplicated logic**
 - `is_remote` (src/art_manager.c:29-31) is byte-identical to `is_remote_url` (src/art.c:374-376).
   Keep one in a shared header.
 - Data-URI stripping exists twice: `strip_data_art` (src/main.c:68-82) for complete blocks,
@@ -99,7 +99,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
   (player_backend_mpris.c:113-148) both fork/exec playerctl -l. Share one capture helper
   with proper read-until-EOF.
 
-### 10. Split long functions
+- [ ] **10. Split long functions**
 - `extract_frame` (src/art.c:25-204): fail-path teardown repeated 9 times; convert to goto
   cleanup pattern.
 - `show_art_mode_selector` (src/ui.c:151-336): extract filter matching, item rendering,
@@ -112,7 +112,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
   resize check, art lifecycle, status line, and render phases.
 - `render_art_to_buffer` (src/art.c:500-618): extract cache resolution and render dispatch.
 
-### 11. Layering and header hygiene
+- [ ] **11. Layering and header hygiene**
 - include/ui.h declares `reset_art`/`get_last_metadata_change_time`, implemented in
   art_manager.c, under a comment noting this; move to art_manager.h and include there.
 - src/layout.c (low-level window creation) calls `reset_art()`/`expire_art_debounce()`
@@ -124,7 +124,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
   including 410 (KEY_RESIZE) which is swallowed while resize is handled out of band via
   SIGWINCH; name them or drop them.
 
-### 12. Repo/build hygiene
+- [ ] **12. Repo/build hygiene**
 - `builddir/` is in the working tree but not covered by .gitignore (which covers only
   `build/` and `build-*/`), and contains stale objects for a removed img2ascii feature;
   delete locally and add to .gitignore.
@@ -139,7 +139,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
 - tofix.md is deleted in the working tree (`git status: D tofix.md`); either commit the
   deletion or restore it. It contained the plan to move off CLI calls (feeds item 22).
 
-### 13. Build config drift
+- [ ] **13. Build config drift**
 - Version is hardcoded in meson.build:2 (1.0.0) and flake.nix:31 (1.0.0) and never compiled
   into the binary; emit a `#define` via meson (or use `configure_file`) so `--version`
   (item 16) is possible. flake.nix can read the version from meson.build.
@@ -155,7 +155,7 @@ no-handler with waitpid loop, log exit status once for the metadata child.
 
 ## P1: Testing
 
-### 14. New test coverage (cmocka)
+- [ ] **14. New test coverage (cmocka)**
 Currently covered: parse_block (test_metadata, 450 lines), url_decode and setters (test_utils),
 config clamps (test_config), trim/bbox (test_art), cache info/clear (test_art_cache),
 compute_layout (test_layout).
@@ -170,7 +170,7 @@ Zero coverage today:
   execvp), `has_player` list parsing.
 - `download_to_cache` failure paths (202 stub or a local file:// url; ties into item 1).
 
-### 15. Test and build tweaks
+- [ ] **15. Test and build tweaks**
 - tests/test_art_cache.c teardown shells out with `system("rm -rf '%s'")` on an mkdtemp path;
   replace with NFTW remove walk (removes system() from tests entirely).
 - CI workflow: build (debug + release-dynamic), meson test, valgrind smoke run gated by
@@ -179,7 +179,7 @@ Zero coverage today:
 
 ## P1: Config file and CLI (README "Planned" items)
 
-### 16. Config file
+- [ ] **16. Config file**
 Context/impl notes:
 - Existing accessors to persist: art mode (utils.c:51-61, clamp 0..ART_MODE_COUNT-1),
   seek interval (utils.c:39-49, clamp 1..60), debounce (config.c:34-42, clamp 0..5000, default 200),
@@ -192,7 +192,7 @@ Context/impl notes:
 - Keep runtime-only state (status messages, retry timers) out of it.
 - Update test_config.c to cover load/save round trip and clamping on import.
 
-### 17. CLI flags and man page
+- [ ] **17. CLI flags and man page**
 - `getopt_long`: `--help`, `--version`, `--player NAME`, `--art-mode MODE` (accepts the 24
   names in art_modes, config.c:5-32), `--interval N`, `--cache-dir PATH`, `--config PATH`,
   `--log-file PATH`. Unknown flags should error to stderr and exit nonzero (today argv is
@@ -203,7 +203,7 @@ Context/impl notes:
 
 ## P2: tldr and tealdeer page
 
-### 18. Ship a yams tldr page in our own directory
+- [ ] **18. Ship a yams tldr page in our own directory**
 Goal: user runs `tldr yams` or `tldr -a yams` with tealdeer, but the page must not live in
 the shared pages/caches that get wiped and re-fetched on every `tldr -u` / `tealdeer update`.
 - Page file: `yams.md` in tldr-pages markdown format (front-matter optional, title, info
@@ -231,7 +231,7 @@ the shared pages/caches that get wiped and re-fetched on every `tldr -u` / `teal
 
 ## P2: Docs and UX consistency
 
-### 19. One keymap table
+- [ ] **19. One keymap table**
 Context: help overlay (main.c:362-381, HELP_L macro 12 entries), metadata pane hints
 (render_utils.c:58-103, omits j/k descriptions entirely), README features, and future
 man page and tldr page all list keys independently and already drift.
@@ -239,7 +239,7 @@ Fix: a static `{key, desc, pane_visible}` table in config/h, rendered by the ove
 pane hints, and exported for the man page/tldr generation (generation optional; manual sync
 from one source is fine at this size).
 
-### 20. README Known Issues, either fix or drop
+- [ ] **20. README Known Issues, either fix or drop**
 - tmux focus-away means exit requires Ctrl+C instead of q: likely ncurses key state and
   bracketed paste handling in init_ui (src/terminal.c:24-26 disables bracketed paste, but
   mouse/paste state after focus events needs checking with tmux enabled).
@@ -253,7 +253,7 @@ from one source is fine at this size).
   clears the player name (src/ui.c:460-462) but there is no follow-mode reset beyond
   `maintain_subprocesses` restarts; investigate playerctl `--player` follow semantics.
 
-### 21. Smaller niceties
+- [ ] **21. Smaller niceties**
 - Volume control: backend vtable slot `set_volume` exists (player_backend.h); wire to
   `playerctl volume N` and add keys (maybe `[`/`]`), requires no external changes.
 - Lyrics scroll keys: lyric pane renders from line 0 (src/panes.c:54-59), no scrolling for
@@ -266,7 +266,7 @@ from one source is fine at this size).
 
 ## P2: Deferred / separate initiative
 
-### 22. Native MPRIS via libgio/GDBus
+- [ ] **22. Native MPRIS via libgio/GDBus**
 Context: current runtime model forks `playerctl metadata --follow` and parses its
 format string output (src/main.c:578-585) with a hand-rolled tab-delimited protocol and
 `[[END]]` framing, plus fork/exec for every control command (src/player_backend_mpris.c).

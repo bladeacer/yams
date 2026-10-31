@@ -20,7 +20,7 @@
 #include "debug.h"
 #include "config.h"
 
-bool resize_pending = false;
+volatile sig_atomic_t resize_pending = false;
 
 static char status_msg[256] = {0};
 static long status_msg_time = 0;
@@ -154,19 +154,34 @@ void show_art_mode_selector(void) {
 
     int vis_rows = max_y - 7;
     if (vis_rows > ART_MODE_COUNT) vis_rows = ART_MODE_COUNT;
-    if (vis_rows < 4) vis_rows = 4;
+    if (vis_rows > max_y - 6) vis_rows = max_y - 6;
+    if (vis_rows < 1) vis_rows = 1;
 
-    int w = 44;
+    int w = max_x < 44 ? max_x : 44;
     int h = vis_rows + 6;
+    if (h > max_y) h = max_y;
+    if (w < 10 || h < 6) {
+        show_status_msg("Terminal too small");
+        return;
+    }
     int sy = (max_y - h) / 2;
     int sx = (max_x - w) / 2;
 
     WINDOW *mwin = newwin(h, w, sy, sx);
+    if (!mwin) {
+        show_status_msg("Could not open art mode selector");
+        return;
+    }
     PANEL *mpanel = new_panel(mwin);
+    if (!mpanel) {
+        delwin(mwin);
+        show_status_msg("Could not open art mode selector");
+        return;
+    }
 
     wbkgd(mwin, COLOR_PAIR(3));
     keypad(mwin, TRUE);
-    nodelay(mwin, FALSE);
+    wtimeout(mwin, 100);
     curs_set(1);
 
     int scroll = 0;
@@ -180,6 +195,8 @@ void show_art_mode_selector(void) {
     for (int i = 0; i < ART_MODE_COUNT; i++) matched[i] = i;
 
     while (true) {
+        if (exit_requested) break;
+
         if (filter_len == 0) {
             match_count = ART_MODE_COUNT;
             for (int i = 0; i < ART_MODE_COUNT; i++) matched[i] = i;
@@ -335,6 +352,12 @@ void show_art_mode_selector(void) {
     resize_pending = true;
 }
 
+static void free_player_list(char **list, int count) {
+    if (!list) return;
+    for (int i = 0; i < count; i++) free(list[i]);
+    free(list);
+}
+
 static char **fetch_player_list(int *count) {
     *count = 0;
     int pipe_fds[2];
@@ -368,17 +391,31 @@ static char **fetch_player_list(int *count) {
 
     char **list = NULL;
     int cap = 0;
-    char *line = strtok(buf, "\n");
+    char *saveptr = NULL;
+    char *line = strtok_r(buf, "\n", &saveptr);
     while (line) {
         if (line[0]) {
             if (*count >= cap) {
-                cap = cap ? cap * 2 : 8;
-                list = realloc(list, sizeof(char*) * (size_t)cap);
+                int new_cap = cap ? cap * 2 : 8;
+                char **tmp = realloc(list, sizeof(char*) * (size_t)new_cap);
+                if (!tmp) {
+                    free_player_list(list, *count);
+                    *count = 0;
+                    return NULL;
+                }
+                list = tmp;
+                cap = new_cap;
             }
-            list[*count] = strdup(line);
+            char *dup = strdup(line);
+            if (!dup) {
+                free_player_list(list, *count);
+                *count = 0;
+                return NULL;
+            }
+            list[*count] = dup;
             (*count)++;
         }
-        line = strtok(NULL, "\n");
+        line = strtok_r(NULL, "\n", &saveptr);
     }
     return list;
 }
@@ -401,26 +438,60 @@ void show_player_selector(void) {
     }
 
     int total_items = count + 1;
-    char **labels = malloc(sizeof(char*) * (size_t)total_items);
+    char **labels = calloc((size_t)total_items, sizeof(char*));
+    if (!labels) {
+        free_player_list(players, count);
+        show_status_msg("Out of memory");
+        return;
+    }
     labels[0] = strdup("Auto (last active)");
     for (int i = 0; i < count; i++)
         labels[i + 1] = strdup(players[i]);
+    for (int i = 0; i < total_items; i++) {
+        if (!labels[i]) {
+            free_player_list(labels, total_items);
+            free_player_list(players, count);
+            show_status_msg("Out of memory");
+            return;
+        }
+    }
 
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
     int vis_rows = total_items < 10 ? total_items : 10;
-    int w = 40;
+    if (vis_rows > max_y - 6) vis_rows = max_y - 6;
+    if (vis_rows < 1) vis_rows = 1;
+    int w = max_x < 40 ? max_x : 40;
     int h = vis_rows + 6;
-    if (h > max_y - 2) h = max_y - 2;
+    if (h > max_y) h = max_y;
+    if (w < 8 || h < 6) {
+        free_player_list(labels, total_items);
+        free_player_list(players, count);
+        show_status_msg("Terminal too small");
+        return;
+    }
     int sy = (max_y - h) / 2;
     int sx = (max_x - w) / 2;
 
     WINDOW *pwin = newwin(h, w, sy, sx);
+    if (!pwin) {
+        free_player_list(labels, total_items);
+        free_player_list(players, count);
+        show_status_msg("Could not open player selector");
+        return;
+    }
     PANEL *ppanel = new_panel(pwin);
+    if (!ppanel) {
+        delwin(pwin);
+        free_player_list(labels, total_items);
+        free_player_list(players, count);
+        show_status_msg("Could not open player selector");
+        return;
+    }
     wbkgd(pwin, COLOR_PAIR(3));
     keypad(pwin, TRUE);
-    nodelay(pwin, FALSE);
+    wtimeout(pwin, 100);
     curs_set(1);
 
     int scroll = 0;
@@ -428,6 +499,8 @@ void show_player_selector(void) {
     if (sel < 0) sel = 0;
 
     while (1) {
+        if (exit_requested) break;
+
         if (sel < scroll) scroll = sel;
         if (sel >= scroll + vis_rows) scroll = sel - vis_rows + 1;
 
@@ -474,10 +547,8 @@ void show_player_selector(void) {
     delwin(pwin);
     curs_set(0);
 
-    for (int i = 0; i < count; i++) free(players[i]);
-    free(players);
-    for (int i = 0; i < total_items; i++) free(labels[i]);
-    free(labels);
+    free_player_list(players, count);
+    free_player_list(labels, total_items);
 
     reset_art();
     resize_pending = true;

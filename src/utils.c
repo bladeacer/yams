@@ -1,7 +1,9 @@
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include <string.h>
 #include <ctype.h>
-#include <stdio.h>
 #include "utils.h"
 #include "config.h"
 
@@ -9,6 +11,29 @@ long get_ms() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+int xasprintf(char **strp, const char *fmt, ...) {
+    va_list ap, ap2;
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) {
+        va_end(ap2);
+        *strp = NULL;
+        return -1;
+    }
+    char *buf = malloc((size_t)n + 1);
+    if (!buf) {
+        va_end(ap2);
+        *strp = NULL;
+        return -1;
+    }
+    vsnprintf(buf, (size_t)n + 1, fmt, ap2);
+    va_end(ap2);
+    *strp = buf;
+    return n;
 }
 
 void url_decode(char *dst, const char *src) {
