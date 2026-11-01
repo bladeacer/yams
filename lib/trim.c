@@ -58,12 +58,28 @@ BBox find_content_bbox(const uint8_t *pixels, int w, int h, int fuzz) {
         if (found) break;
     }
 
+    /* A uniform image has no content to trim: keep the full frame instead of
+     * returning an inverted box (top == h, left == w) that would crop outside
+     * the source buffer. */
+    if (bbox.top >= h || bbox.bottom < bbox.top ||
+        bbox.left >= w || bbox.right < bbox.left)
+        return (BBox){0, h - 1, 0, w - 1};
+
     return bbox;
 }
 
 uint8_t *crop_pixels(const uint8_t *src, int src_w, int src_h,
                      BBox bbox, int *out_w, int *out_h) {
-    (void)src_h;
+    if (!src || !out_w || !out_h || src_w <= 0 || src_h <= 0)
+        return NULL;
+
+    if (bbox.left < 0) bbox.left = 0;
+    if (bbox.top < 0) bbox.top = 0;
+    if (bbox.right >= src_w) bbox.right = src_w - 1;
+    if (bbox.bottom >= src_h) bbox.bottom = src_h - 1;
+    if (bbox.right < bbox.left || bbox.bottom < bbox.top)
+        return NULL;
+
     int new_w = bbox.right - bbox.left + 1;
     int new_h = bbox.bottom - bbox.top + 1;
     if (new_w < 1) new_w = 1;

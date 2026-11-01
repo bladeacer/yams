@@ -175,6 +175,50 @@ static void test_crop_full_image(void **state) {
     free(pixels);
 }
 
+static void test_crop_invalid_bbox_rejected(void **state) {
+    (void)state;
+    uint8_t src[4 * 4 * 4];
+    memset(src, 0, sizeof(src));
+
+    /* Inverted / out-of-range boxes must not read outside the source. */
+    BBox inverted = {4, 3, 4, 3};
+    int out_w = 0, out_h = 0;
+    assert_null(crop_pixels(src, 4, 4, inverted, &out_w, &out_h));
+
+    /* Out-of-range edges are clamped, not used as-is. */
+    BBox oversized = {-5, 99, -5, 99};
+    uint8_t *cropped = crop_pixels(src, 4, 4, oversized, &out_w, &out_h);
+    assert_non_null(cropped);
+    assert_int_equal(out_w, 4);
+    assert_int_equal(out_h, 4);
+    free(cropped);
+}
+
+static void test_trim_uniform_image_returns_full_frame(void **state) {
+    (void)state;
+    int w = 5, h = 4;
+    size_t sz = (size_t)w * h * 4;
+    uint8_t *pixels = malloc(sz);
+    assert_non_null(pixels);
+    memset(pixels, 0x40, sz);
+
+    BBox bbox = find_content_bbox(pixels, w, h, 25);
+    assert_int_equal(bbox.top, 0);
+    assert_int_equal(bbox.bottom, h - 1);
+    assert_int_equal(bbox.left, 0);
+    assert_int_equal(bbox.right, w - 1);
+
+    int out_w = 0, out_h = 0;
+    uint8_t *cropped = crop_pixels(pixels, w, h, bbox, &out_w, &out_h);
+    assert_non_null(cropped);
+    assert_int_equal(out_w, w);
+    assert_int_equal(out_h, h);
+    assert_int_equal(memcmp(cropped, pixels, sz), 0);
+
+    free(cropped);
+    free(pixels);
+}
+
 int main(void) {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_trim_no_borders),
@@ -183,6 +227,8 @@ int main(void) {
         cmocka_unit_test(test_trim_removes_border_rows_keeps_content),
         cmocka_unit_test(test_crop_simple),
         cmocka_unit_test(test_crop_full_image),
+        cmocka_unit_test(test_crop_invalid_bbox_rejected),
+        cmocka_unit_test(test_trim_uniform_image_returns_full_frame),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
