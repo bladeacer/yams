@@ -82,6 +82,7 @@ static void handle_exit(int sig) {
   if (backend && backend->cleanup)
     backend->cleanup();
   free_art();
+  art_mode_cleanup();
   close_debug();
   cleanup_ui();
 }

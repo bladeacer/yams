@@ -3,7 +3,7 @@
 
 #include <chafa.h>
 
-#define ART_MODE_COUNT 24
+#define ART_MODE_COUNT 25
 
 typedef struct {
     int id;

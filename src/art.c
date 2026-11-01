@@ -15,13 +15,207 @@
 #include <unistd.h>
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "art.h"
+#include "config.h"
 #include "debug.h"
 #include "metadata.h"
 #include "stb_image_resize.h"
+#include "subprocess.h"
 #include "trim.h"
 #include "utils.h"
 
 #define FUZZ_10PCT 25
+
+extern char **environ;
+
+/* Terminal capabilities are queried once and reused. */
+static ChafaTermInfo *art_term_info(void) {
+  static ChafaTermInfo *term_info = NULL;
+  static bool initialized = false;
+
+  if (!initialized) {
+    initialized = true;
+    ChafaTermDb *db = chafa_term_db_get_default();
+    if (db)
+      term_info = chafa_term_db_detect(db, environ);
+  }
+  return term_info;
+}
+
+static ChafaPassthrough art_passthrough_for(ChafaPixelMode pixel_mode) {
+  ChafaTermInfo *term_info = art_term_info();
+
+  if (!term_info ||
+      !chafa_term_info_get_is_pixel_passthrough_needed(term_info, pixel_mode))
+    return CHAFA_PASSTHROUGH_NONE;
+
+  return chafa_term_info_get_passthrough_type(term_info);
+}
+
+/* tmux discards passthrough sequences unless its current window allows them.
+ * Enable the option on demand and restore the previous value on exit. */
+static int tmux_passthrough_state = -1; /* -1 untried, 0 failed, 1 ready */
+static char *tmux_passthrough_previous = NULL;
+static bool tmux_passthrough_changed = false;
+
+static bool tmux_run(char *const argv[], CommandOutput *out) {
+  const char *tmux = getenv("TMUX");
+  if (!tmux || !tmux[0])
+    return false;
+
+  CommandOutput local;
+  CommandOutput *result = out ? out : &local;
+  if (!capture_command(argv, result))
+    return false;
+
+  bool ok = result->exited && result->exit_status == 0;
+  if (!out)
+    command_output_free(result);
+  return ok;
+}
+
+static char *trimmed_copy(const char *s) {
+  if (!s)
+    return NULL;
+
+  while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')
+    s++;
+
+  size_t len = strlen(s);
+  while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t' ||
+                     s[len - 1] == '\n' || s[len - 1] == '\r'))
+    len--;
+
+  char *copy = malloc(len + 1);
+  if (!copy)
+    return NULL;
+  memcpy(copy, s, len);
+  copy[len] = '\0';
+  return copy;
+}
+
+static bool ensure_tmux_passthrough(void) {
+  if (tmux_passthrough_state >= 0)
+    return tmux_passthrough_state == 1;
+
+  tmux_passthrough_state = 0;
+
+  char *show_argv[] = {"tmux", "show-options", "-w", "-v",
+                       "allow-passthrough", NULL};
+  CommandOutput out;
+  if (!tmux_run(show_argv, &out))
+    return false;
+
+  char *current = trimmed_copy(out.data);
+  command_output_free(&out);
+  /* An empty value means the option was previously unset. */
+  if (current && !current[0]) {
+    free(current);
+    current = NULL;
+  }
+
+  if (current && (strcmp(current, "on") == 0 ||
+                  strcmp(current, "all") == 0)) {
+    free(current);
+    tmux_passthrough_state = 1;
+    return true;
+  }
+
+  char *set_argv[] = {"tmux", "set-option", "-w",
+                      "allow-passthrough", "on", NULL};
+  if (!tmux_run(set_argv, NULL)) {
+    free(current);
+    return false;
+  }
+
+  /* Remember the old value (NULL when unset) for art_mode_cleanup(). */
+  tmux_passthrough_previous = current;
+  tmux_passthrough_changed = true;
+  tmux_passthrough_state = 1;
+  return true;
+}
+
+bool art_mode_ready(ChafaPixelMode pixel_mode) {
+  if (pixel_mode == CHAFA_PIXEL_MODE_SYMBOLS)
+    return true;
+  if (pixel_mode < 0 || pixel_mode >= CHAFA_PIXEL_MODE_MAX)
+    return false;
+
+  ChafaTermInfo *term_info = art_term_info();
+  if (!term_info ||
+      !chafa_term_info_is_pixel_mode_supported(term_info, pixel_mode))
+    return false;
+
+  if (!chafa_term_info_get_is_pixel_passthrough_needed(term_info, pixel_mode))
+    return true;
+
+  switch (chafa_term_info_get_passthrough_type(term_info)) {
+    case CHAFA_PASSTHROUGH_TMUX:
+      return ensure_tmux_passthrough();
+    case CHAFA_PASSTHROUGH_SCREEN:
+      return true;
+    default:
+      return false;
+  }
+}
+
+const char *art_mode_unsupported_hint(ChafaPixelMode pixel_mode) {
+  ChafaTermInfo *term_info = art_term_info();
+
+  if (pixel_mode == CHAFA_PIXEL_MODE_KITTY) {
+    if (term_info &&
+        chafa_term_info_is_pixel_mode_supported(term_info, pixel_mode) &&
+        chafa_term_info_get_is_pixel_passthrough_needed(term_info,
+                                                        pixel_mode) &&
+        chafa_term_info_get_passthrough_type(term_info) ==
+            CHAFA_PASSTHROUGH_TMUX)
+      return "enable tmux allow-passthrough";
+    return "terminal has no Kitty graphics support";
+  }
+
+  if (pixel_mode == CHAFA_PIXEL_MODE_SIXELS)
+    return "terminal has no sixel support";
+
+  return "terminal does not support this mode";
+}
+
+int art_fallback_mode(int desired_mode) {
+  if (desired_mode < 0 || desired_mode >= ART_MODE_COUNT)
+    return 0;
+  if (art_mode_ready(art_modes[desired_mode].pixel_mode))
+    return desired_mode;
+
+  ChafaTermInfo *term_info = art_term_info();
+  if (term_info) {
+    ChafaPixelMode best = chafa_term_info_get_best_pixel_mode(term_info);
+    if (best != CHAFA_PIXEL_MODE_SYMBOLS && art_mode_ready(best)) {
+      for (int i = 0; i < ART_MODE_COUNT; i++) {
+        if (art_modes[i].pixel_mode == best)
+          return i;
+      }
+    }
+  }
+
+  return 0;
+}
+
+void art_mode_cleanup(void) {
+  if (!tmux_passthrough_changed)
+    return;
+
+  if (tmux_passthrough_previous) {
+    char *restore_argv[] = {"tmux", "set-option", "-w", "allow-passthrough",
+                            tmux_passthrough_previous, NULL};
+    tmux_run(restore_argv, NULL);
+  } else {
+    char *unset_argv[] = {"tmux", "set-option", "-w", "-u",
+                          "allow-passthrough", NULL};
+    tmux_run(unset_argv, NULL);
+  }
+
+  free(tmux_passthrough_previous);
+  tmux_passthrough_previous = NULL;
+  tmux_passthrough_changed = false;
+}
 
 static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w,
                          int *out_h) {
@@ -274,6 +468,7 @@ static void render_pixel_to_gs(uint8_t *pixels, int img_w, int img_h,
   chafa_canvas_config_set_preprocessing_enabled(config, FALSE);
   chafa_canvas_config_set_bg_color(config, 0x000000);
   chafa_canvas_config_set_pixel_mode(config, pixel_mode);
+  chafa_canvas_config_set_passthrough(config, art_passthrough_for(pixel_mode));
 
   ChafaFrame *frame = chafa_frame_new(pixels, CHAFA_PIXEL_RGBA8_UNASSOCIATED,
                                       img_w, img_h, img_w * 4);
@@ -281,7 +476,13 @@ static void render_pixel_to_gs(uint8_t *pixels, int img_w, int img_h,
   chafa_image_set_frame(image, frame);
   chafa_frame_unref(frame);
 
-  ChafaPlacement *placement = chafa_placement_new(image, 0);
+  /* A per-process placement ID keeps image data from colliding with other
+   * yams instances sharing the same terminal (e.g. tmux panes). */
+  static int placement_id = 0;
+  if (placement_id == 0)
+    placement_id = 1 + (int)(getpid() % 255);
+
+  ChafaPlacement *placement = chafa_placement_new(image, placement_id);
   chafa_image_unref(image);
   chafa_placement_set_tuck(placement, CHAFA_TUCK_FIT);
   chafa_placement_set_halign(placement, CHAFA_ALIGN_CENTER);

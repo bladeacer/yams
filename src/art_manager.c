@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <errno.h>
 #include "art_manager.h"
 #include "art.h"
 #include "utils.h"
@@ -16,6 +17,14 @@ static long last_metadata_change_time = 0;
 
 static char *art_buffer = NULL;
 static size_t art_buffer_len = 0;
+/* Byte offset of the part that must be redrawn on every frame. Zero means the
+ * whole buffer; art_buffer_len means nothing needs to be replayed. */
+static size_t art_replay_offset = 0;
+static bool art_full_replay = true;
+
+/* Art is rendered with its top-left cell at these coordinates. */
+static const int art_origin_x = 2;
+static const int art_origin_y = 1;
 
 static char retry_src[4096] = {0};
 static int retry_attempt = 0;
@@ -41,12 +50,16 @@ void free_art(void) {
     free(art_buffer);
     art_buffer = NULL;
     art_buffer_len = 0;
+    art_replay_offset = 0;
+    art_full_replay = true;
 }
 
 void reset_art() {
     free(art_buffer);
     art_buffer = NULL;
     art_buffer_len = 0;
+    art_replay_offset = 0;
+    art_full_replay = true;
     last_art_path[0] = '\0';
     last_title_sig[0] = '\0';
     last_metadata_change_time = get_ms();
@@ -56,10 +69,39 @@ void reset_art() {
     art_refresh_requested = true;
 }
 
-void replay_art_buffer(void) {
-    if (art_buffer && art_buffer_len > 0) {
-        write(STDOUT_FILENO, art_buffer, art_buffer_len);
+static void write_all(const char *data, size_t len) {
+    size_t offset = 0;
+    while (offset < len) {
+        ssize_t n = write(STDOUT_FILENO, data + offset, len - offset);
+        if (n > 0) {
+            offset += (size_t)n;
+            continue;
+        }
+        if (n < 0 && errno == EINTR)
+            continue;
+        break;
     }
+}
+
+void replay_art_buffer(void) {
+    if (!art_buffer || art_buffer_len == 0) return;
+
+    size_t offset = art_full_replay ? 0 : art_replay_offset;
+    if (offset >= art_buffer_len) return;
+
+    /* A Kitty image body only needs to be sent once; the Unicode placeholder
+     * grid that follows it is ordinary text, so it is replayed from the art
+     * origin each frame. */
+    if (offset > 0) {
+        char pos[32];
+        int n = snprintf(pos, sizeof(pos), "\x1b[%d;%dH",
+                         art_origin_y + 1, art_origin_x + 1);
+        if (n > 0)
+            write_all(pos, (size_t)n);
+    }
+
+    write_all(art_buffer + offset, art_buffer_len - offset);
+    art_full_replay = false;
 }
 
 static char *make_art_message(int x, int y, int w, int h, const char *msg) {
@@ -78,6 +120,39 @@ static char *make_art_message(int x, int y, int w, int h, const char *msg) {
         snprintf(buf + pos, (size_t)(4096 - pos),
                  "\x1b[%d;%dH%s", y + h / 2, x + 2, msg);
     return buf;
+}
+
+/* Chafa's Kitty output consists of passthrough-wrapped image data followed by
+ * a Unicode placeholder grid. Only the grid needs to be redrawn each frame.
+ * Direct (non-passthrough) Kitty placements are stored by the terminal, so
+ * there is nothing to replay at all. */
+static void set_replay_offset_for(const ArtModeEntry *mode) {
+    art_full_replay = true;
+    art_replay_offset = 0;
+
+    if (mode->pixel_mode != CHAFA_PIXEL_MODE_KITTY || !art_buffer)
+        return;
+
+    static const char marker[] = "\x1b\x1b\\\x1b\\";
+    const size_t marker_len = sizeof(marker) - 1;
+    const char *last = NULL;
+    const char *p = art_buffer;
+
+    while ((p = strstr(p, marker)) != NULL) {
+        last = p;
+        p += marker_len;
+    }
+
+    if (last) {
+        size_t offset = (size_t)(last - art_buffer) + marker_len;
+        /* Chafa may terminate the passthrough with an extra ST. */
+        while (offset + 1 < art_buffer_len &&
+               art_buffer[offset] == '\x1b' && art_buffer[offset + 1] == '\\')
+            offset += 2;
+        art_replay_offset = offset;
+    } else {
+        art_replay_offset = art_buffer_len;
+    }
 }
 
 void update_and_render_art(const char* src, const char* sig, int w, int h, bool force) {
@@ -131,12 +206,31 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
         art_buffer_len = 0;
 
         const ArtModeEntry *mode = &art_modes[get_art_mode()];
-        char *new_buf = render_art_to_buffer(2, 1, w, h,
-                                              mode->tags, mode->pixel_mode, mode->is_ascii);
+        bool rendered = false;
+        char *new_buf = NULL;
+
+        if (art_mode_ready(mode->pixel_mode)) {
+            new_buf = render_art_to_buffer(art_origin_x, art_origin_y, w, h,
+                                           mode->tags, mode->pixel_mode,
+                                           mode->is_ascii);
+            rendered = (new_buf != NULL);
+        } else {
+            char msg[192];
+            snprintf(msg, sizeof(msg), " Art mode '%s' unavailable: %s",
+                     mode->name, art_mode_unsupported_hint(mode->pixel_mode));
+            new_buf = make_art_message(art_origin_x, art_origin_y, w, h, msg);
+        }
+
         if (new_buf) {
             DBG("  render_art_to_buffer SUCCESS, len=%zu", strlen(new_buf));
             art_buffer = new_buf;
             art_buffer_len = strlen(new_buf);
+            if (rendered)
+                set_replay_offset_for(mode);
+            else {
+                art_replay_offset = 0;
+                art_full_replay = true;
+            }
             retry_src[0] = '\0';
             retry_attempt = 0;
         } else {
@@ -149,10 +243,12 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
             else
                 snprintf(msg, sizeof(msg), " No album art [%s]",
                          art_modes[get_art_mode()].name);
-            new_buf = make_art_message(2, 1, w, h, msg);
+            new_buf = make_art_message(art_origin_x, art_origin_y, w, h, msg);
             if (new_buf) {
                 art_buffer = new_buf;
                 art_buffer_len = strlen(new_buf);
+                art_replay_offset = 0;
+                art_full_replay = true;
             }
             if (is_remote_url(src) && strcmp(src, retry_src) == 0) {
                 int idx = retry_attempt < 5 ? retry_attempt : 4;

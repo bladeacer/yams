@@ -29,6 +29,7 @@ const ArtModeEntry art_modes[ART_MODE_COUNT] = {
                         & ~CHAFA_SYMBOL_TAG_EXTRA
                         & ~CHAFA_SYMBOL_TAG_BAD),                CHAFA_PIXEL_MODE_SYMBOLS, 0 },
     { 23, "sixel",     0,                                        CHAFA_PIXEL_MODE_SIXELS,  0 },
+    { 24, "kitty",     0,                                        CHAFA_PIXEL_MODE_KITTY,   0 },
 };
 
 void set_art_debounce(int ms) {

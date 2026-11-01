@@ -106,7 +106,7 @@ static void test_art_mode_set_get(void **state) {
 
 static void test_art_mode_table_coverage(void **state) {
     (void)state;
-    assert_int_equal(ART_MODE_COUNT, 24);
+    assert_int_equal(ART_MODE_COUNT, 25);
     for (int i = 0; i < ART_MODE_COUNT; i++) {
         assert_non_null(art_modes[i].name);
         assert_int_not_equal(strlen(art_modes[i].name), 0);

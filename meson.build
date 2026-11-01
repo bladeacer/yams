@@ -24,7 +24,7 @@ libavcodec = dependency('libavcodec', required : true)
 libswscale = dependency('libswscale', required : true)
 libavutil = dependency('libavutil', required : true)
 
-chafa = dependency('chafa', required : true)
+chafa = dependency('chafa', required : true, version : '>=1.16')
 
 if not get_option('logging')
   add_project_arguments('-DNDEBUG', language: 'c')

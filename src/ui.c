@@ -11,6 +11,7 @@
 #include <fcntl.h>
 
 #include "ui.h"
+#include "art.h"
 #include "layout.h"
 #include "panes.h"
 #include "art_manager.h"
@@ -489,8 +490,20 @@ void show_art_mode_selector(void) {
 
     int sel = run_list_selector("Art Mode", names, ART_MODE_COUNT,
                                 get_art_mode(), true);
-    if (sel >= 0)
+    if (sel >= 0) {
+        const ArtModeEntry *mode = &art_modes[sel];
+        if (!art_mode_ready(mode->pixel_mode)) {
+            char msg[256];
+            int fallback = art_fallback_mode(sel);
+            snprintf(msg, sizeof(msg), " '%s' unavailable (%s); using '%s'",
+                     mode->name,
+                     art_mode_unsupported_hint(mode->pixel_mode),
+                     art_modes[fallback].name);
+            show_status_msg(msg);
+            sel = fallback;
+        }
         set_art_mode(sel);
+    }
 
     reset_art();
     resize_pending = true;
