@@ -98,9 +98,11 @@ static void install_signal_handlers(void) {
   sigaction(SIGTERM, &sa, NULL);
 
   sa.sa_handler = handle_winch;
+  sa.sa_flags = SA_RESTART; /* resizes must not truncate pty writes */
   sigaction(SIGWINCH, &sa, NULL);
 
   sa.sa_handler = handle_child;
+  sa.sa_flags = SA_RESTART; /* do not truncate pty writes when children exit */
   sigaction(SIGCHLD, &sa, NULL);
 }
 
