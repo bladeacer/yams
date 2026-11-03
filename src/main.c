@@ -136,6 +136,16 @@ static void restart_metadata_stream(void) {
   start_metadata_stream();
 }
 
+/* Manual refresh: restart the stream but keep the current metadata visible so
+ * the dashboard does not flash back to the fallback screen. */
+static void refresh_metadata_stream(void) {
+  stop_metadata_stream();
+  metadata_request_refresh();
+  last_metadata_ms = 0;
+  expire_art_debounce();
+  start_metadata_stream();
+}
+
 /* Reap every terminated child once per SIGCHLD. The handler only sets a flag,
  * so all waitpid() calls happen here, off the signal path. */
 static void reap_children(void) {
@@ -365,7 +375,11 @@ static void handle_keypress(int ch, long now) {
     exit_requested = 1;
     break;
   case ' ':
+    /* Flip the status locally first so the UI reacts on the next frame
+     * instead of waiting for the player's D-Bus round-trip. */
+    metadata_optimistic_toggle_status();
     backend->play_pause();
+    resize_pending = true;
     break;
   case 'j':
     snprintf(seek_cmd, sizeof(seek_cmd), "%d-", get_seek_interval());
@@ -444,6 +458,9 @@ static void handle_keypress(int ch, long now) {
     DBG("Manual refresh requested");
     reset_art();
     expire_art_debounce();
+    metadata_request_refresh();
+    refresh_metadata_stream();
+    show_status_msg("Refreshed");
     resize_pending = true;
     last_resize_time = now - 1000;
     break;
@@ -702,7 +719,8 @@ int main() {
       "TITLE|{{xesam:title}}	"
       "ARTIST|{{xesam:artist}}	ALBUM|{{xesam:album}}	"
       "PATH|{{xesam:url}}	"
-      "LENGTH|{{mpris:length}}	GENRE|{{xesam:genre}}	"
+      "LENGTH|{{mpris:length}}	POSITION|{{position}}	"
+      "GENRE|{{xesam:genre}}	"
       "COMPOSER|{{xesam:composer}}	"
       "ART|{{mpris:artUrl}}	LYRICS|{{xesam:asText}}	[[END]]";
   meta_fmt = fmt;

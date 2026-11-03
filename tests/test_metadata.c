@@ -245,6 +245,113 @@ static void test_rapid_alternating_clear(void **state) {
     }
 }
 
+static void test_parse_block_lrc_timestamps(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "TITLE|Synced\tLYRICS|[00:01.00]one\n[00:05.50]two\n"
+                   "[ar:Some Artist]\nplain line\n";
+    assert_true(parse_block(input));
+    assert_int_equal(m.lyric_count, 3);
+    assert_string_equal(m.lyrics[0], "one");
+    assert_string_equal(m.lyrics[1], "two");
+    assert_string_equal(m.lyrics[2], "plain line");
+    assert_int_equal(m.lyric_times[0], 1000000);
+    assert_int_equal(m.lyric_times[1], 5500000);
+    assert_int_equal(m.lyric_times[2], -1);
+
+    assert_int_equal(metadata_lyric_index_at(500000), -1);
+    assert_int_equal(metadata_lyric_index_at(1000000), 0);
+    assert_int_equal(metadata_lyric_index_at(2000000), 0);
+    assert_int_equal(metadata_lyric_index_at(6000000), 1);
+}
+
+static void test_parse_block_lrc_multiple_tags(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "TITLE|Multi\tLYRICS|[00:02.00][00:08.50]chorus\n";
+    assert_true(parse_block(input));
+    assert_int_equal(m.lyric_count, 2);
+    assert_string_equal(m.lyrics[0], "chorus");
+    assert_string_equal(m.lyrics[1], "chorus");
+    assert_int_equal(m.lyric_times[0], 2000000);
+    assert_int_equal(m.lyric_times[1], 8500000);
+}
+
+static void test_lyrics_refresh_without_title_change(void **state) {
+    (void)state;
+    clear_metadata();
+
+    char first[] = "TITLE|Same Song\tARTIST|Same Artist\tLYRICS|first line\n";
+    assert_true(parse_block(first));
+    assert_int_equal(m.lyric_count, 1);
+    assert_string_equal(m.lyrics[0], "first line");
+
+    /* The metadata stream repeats the title on every update. New lyrics must
+     * still replace the old ones even when the song identity is unchanged. */
+    char second[] = "TITLE|Same Song\tARTIST|Same Artist\tLYRICS|second line\n";
+    assert_true(parse_block(second));
+    assert_int_equal(m.lyric_count, 1);
+    assert_string_equal(m.lyrics[0], "second line");
+}
+
+static void test_lyrics_forced_refresh(void **state) {
+    (void)state;
+    clear_metadata();
+
+    char first[] = "TITLE|Song\tARTIST|Artist\tLYRICS|only line\n";
+    char again[] = "TITLE|Song\tARTIST|Artist\tLYRICS|only line\n";
+    assert_true(parse_block(first));
+    assert_false(parse_block(again));
+
+    metadata_request_refresh();
+    char forced[] = "TITLE|Song\tARTIST|Artist\tLYRICS|only line\n";
+    assert_true(parse_block(forced));
+    assert_int_equal(m.lyric_count, 1);
+}
+
+static void test_parse_block_position_not_path(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "POSITION|2500000\tPATH|/music/song.flac";
+    parse_block(input);
+    assert_int_equal(m.position_us, 2500000);
+    assert_string_equal(m.file_path, "/music/song.flac");
+    assert_true(metadata_position_us() >= 2500000);
+}
+
+static void test_optimistic_status_toggle(void **state) {
+    (void)state;
+    clear_metadata();
+
+    char playing[] = "STATUS|Playing";
+    assert_true(parse_block(playing));
+    assert_string_equal(m.status, "Playing");
+
+    metadata_optimistic_toggle_status();
+    assert_string_equal(m.status, "Paused");
+
+    /* A stale update from the player must not undo the instant local flip. */
+    char stale[] = "STATUS|Playing";
+    assert_false(parse_block(stale));
+    assert_string_equal(m.status, "Paused");
+
+    /* The confirmation is accepted. */
+    char confirmed[] = "STATUS|Paused";
+    assert_false(parse_block(confirmed));
+    assert_string_equal(m.status, "Paused");
+}
+
+static void test_format_timestamp(void **state) {
+    (void)state;
+    char buf[32];
+    format_timestamp(0, buf, sizeof(buf));
+    assert_string_equal(buf, "0:00");
+    format_timestamp(65000000, buf, sizeof(buf));
+    assert_string_equal(buf, "1:05");
+    format_timestamp(3725000000LL, buf, sizeof(buf));
+    assert_string_equal(buf, "1:02:05");
+}
+
 static const char* safe_str_test(const char* s) {
     return (s && strlen(s) > 0) ? s : "Unknown";
 }
@@ -434,6 +541,13 @@ int main(void) {
         cmocka_unit_test(test_rapid_status_toggle),
         cmocka_unit_test(test_rapid_song_switch_with_overlap),
         cmocka_unit_test(test_rapid_alternating_clear),
+        cmocka_unit_test(test_parse_block_lrc_timestamps),
+        cmocka_unit_test(test_parse_block_lrc_multiple_tags),
+        cmocka_unit_test(test_lyrics_refresh_without_title_change),
+        cmocka_unit_test(test_lyrics_forced_refresh),
+        cmocka_unit_test(test_parse_block_position_not_path),
+        cmocka_unit_test(test_optimistic_status_toggle),
+        cmocka_unit_test(test_format_timestamp),
         cmocka_unit_test(test_safe_str_null),
         cmocka_unit_test(test_safe_str_empty),
         cmocka_unit_test(test_safe_str_value),

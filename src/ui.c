@@ -36,6 +36,7 @@ void show_status_msg(const char *msg) {
 typedef struct {
     char last_title[512];
     char last_artist[512];
+    char last_path[2048];
     bool art_update_requested;
     bool was_active;
 } DashboardState;
@@ -81,11 +82,17 @@ static void update_player_activity(bool player_active) {
 
 static void update_identity(const MetadataSnap *snap) {
     bool identity_changed = (strcmp(snap->title, dashboard.last_title) != 0 ||
-                             strcmp(snap->artist, dashboard.last_artist) != 0);
+                             strcmp(snap->artist, dashboard.last_artist) != 0 ||
+                             strcmp(snap->file_path, dashboard.last_path) != 0);
 
-    if (identity_changed && (snap->title[0] || snap->artist[0])) {
+    if (identity_changed &&
+        (snap->title[0] || snap->artist[0] || snap->file_path[0])) {
         strncpy(dashboard.last_title, snap->title, sizeof(dashboard.last_title) - 1);
         strncpy(dashboard.last_artist, snap->artist, sizeof(dashboard.last_artist) - 1);
+        strncpy(dashboard.last_path, snap->file_path, sizeof(dashboard.last_path) - 1);
+        dashboard.last_title[sizeof(dashboard.last_title) - 1] = '\0';
+        dashboard.last_artist[sizeof(dashboard.last_artist) - 1] = '\0';
+        dashboard.last_path[sizeof(dashboard.last_path) - 1] = '\0';
         reset_art();
         dashboard.art_update_requested = true;
     }
