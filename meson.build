@@ -42,6 +42,7 @@ sources = [
   'src/panes.c',
   'src/art_manager.c',
   'src/render_utils.c',
+  'src/selector_layout.c',
   'src/config.c',
   'src/stream.c',
   'src/subprocess.c',

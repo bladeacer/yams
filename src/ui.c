@@ -8,9 +8,11 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
 
 #include "ui.h"
+#include "selector_layout.h"
 #include "art.h"
 #include "layout.h"
 #include "panes.h"
@@ -196,29 +198,20 @@ static int run_list_selector(const char *title, const char *const *items,
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
-    int vis_rows = max_y - 7;
-    if (vis_rows > count) vis_rows = count;
-    if (vis_rows > max_y - 6) vis_rows = max_y - 6;
-    if (vis_rows < 1) vis_rows = 1;
-
-    int min_w = (int)strlen(title) + 6;
+    int max_item_w = (int)strlen(title);
     for (int i = 0; i < count; i++) {
-        int item_w = (int)strlen(items[i]) + 6;
-        if (item_w > min_w) min_w = item_w;
+        int item_w = (int)strlen(items[i]);
+        if (item_w > max_item_w) max_item_w = item_w;
     }
-    if (min_w > 50) min_w = 50;
-    if (min_w < 30) min_w = 30;
-    int w = max_x < min_w ? max_x : min_w;
-    int h = vis_rows + (filterable ? 6 : 5);
-    if (h > max_y) h = max_y;
-    if (w < 10 || h < 5) {
+
+    SelectorLayout lo;
+    if (!compute_selector_layout(max_y, max_x, count, max_item_w, filterable,
+                                 &lo)) {
         show_status_msg("Terminal too small");
         return -1;
     }
 
-    int sy = (max_y - h) / 2;
-    int sx = (max_x - w) / 2;
-    WINDOW *win = newwin(h, w, sy, sx);
+    WINDOW *win = newwin(lo.h, lo.w, lo.y, lo.x);
     if (!win) {
         show_status_msg("Could not open selector");
         return -1;
@@ -276,52 +269,68 @@ static int run_list_selector(const char *title, const char *const *items,
 
         if (sel_idx >= 0) {
             if (sel_idx < scroll) scroll = sel_idx;
-            if (sel_idx >= scroll + vis_rows) scroll = sel_idx - vis_rows + 1;
+            if (sel_idx >= scroll + lo.vis_rows)
+                scroll = sel_idx - lo.vis_rows + 1;
         } else {
             scroll = 0;
         }
 
         werase(win);
         box(win, 0, 0);
-        mvwprintw(win, 0, 2, " %s ", title);
+        if (lo.w > 4)
+            mvwaddnstr(win, 0, 2, title, lo.w - 4);
 
-        int line = 1;
-        for (int i = scroll; i < match_count && line <= vis_rows; i++, line++) {
+        int list_end = (lo.footer_y > 0) ? lo.footer_y : lo.h - 1;
+        for (int i = scroll; i < match_count; i++) {
+            int row = lo.list_y + (i - scroll);
+            if (row >= list_end) break;
+
             int idx = matched[i];
+            int text_w = lo.w - 4;
+            if (text_w < 1) text_w = 1;
             if (idx == current) {
                 wattron(win, A_REVERSE);
-                mvwprintw(win, line, 2, "%s", items[idx]);
-                int pad = w - 4 - (int)strlen(items[idx]);
-                if (pad > 0)
-                    mvwprintw(win, line, 2 + (int)strlen(items[idx]), "%*s", pad, "");
+                mvwhline(win, row, 1, ' ', lo.w - 2);
+                mvwaddnstr(win, row, 2, items[idx], text_w);
                 wattroff(win, A_REVERSE);
             } else {
-                mvwprintw(win, line, 2, "%s", items[idx]);
+                mvwhline(win, row, 1, ' ', lo.w - 2);
+                mvwaddnstr(win, row, 2, items[idx], text_w);
             }
         }
 
-        if (match_count == 0)
-            mvwprintw(win, 1, 2, "(no matches)");
+        if (match_count == 0 && lo.list_y < list_end) {
+            mvwaddnstr(win, lo.list_y, 2, "(no matches)", lo.w - 4);
+        }
 
-        if (filterable) {
-            mvwprintw(win, h - 5, 2, "arrows/vim  scroll  ENTER select");
-            mvwprintw(win, h - 4, 2, "ESC quit  Type to filter");
-            mvwprintw(win, h - 3, 2, "Filter: ");
-            if (filter_len > 0) {
-                int max_fw = w - 12;
-                int vis_len = filter_len;
-                int start = 0;
-                if (vis_len > max_fw) {
-                    start = vis_len - max_fw;
-                    vis_len = max_fw;
+        if (lo.footer_y > 0) {
+            int hint_w = lo.w - 4;
+            if (hint_w < 1) hint_w = 1;
+            mvwaddnstr(win, lo.footer_y, 2,
+                       "arrows/vim scroll ENTER select", hint_w);
+            if (lo.footer_y + 1 < lo.h - 1)
+                mvwaddnstr(win, lo.footer_y + 1, 2,
+                           filterable ? "ESC quit  Type to filter" : "ESC  quit",
+                           hint_w);
+
+            if (filterable && lo.filter_y > 0) {
+                mvwaddnstr(win, lo.filter_y, 2, "Filter: ", hint_w);
+                if (filter_len > 0 && lo.filter_w > 0) {
+                    int start = 0;
+                    int vis_len = filter_len;
+                    if (vis_len > lo.filter_w) {
+                        start = vis_len - lo.filter_w;
+                        vis_len = lo.filter_w;
+                    }
+                    wattron(win, A_BOLD);
+                    mvwaddnstr(win, lo.filter_y, lo.filter_x, filter + start,
+                               vis_len);
+                    wattroff(win, A_BOLD);
+                    wmove(win, lo.filter_y, lo.filter_x + vis_len);
+                } else if (lo.filter_w > 0) {
+                    wmove(win, lo.filter_y, lo.filter_x);
                 }
-                wattron(win, A_BOLD);
-                mvwprintw(win, h - 3, 10, "%.*s", vis_len, filter + start);
-                wattroff(win, A_BOLD);
             }
-        } else {
-            mvwprintw(win, h - 4, 2, "arrows/vim  scroll  ENTER select");
-            mvwprintw(win, h - 3, 2, "ESC  quit");
         }
 
         update_panels();
@@ -330,8 +339,30 @@ static int run_list_selector(const char *title, const char *const *items,
         int ch = wgetch(win);
         if (ch == ERR) continue;
         if (ch == KEY_RESIZE || ch == 410) {
-            resize_pending = true;
-            break;
+            /* Recompute in place instead of closing the menu. This keeps the
+             * selector usable while the terminal is being resized. */
+            struct winsize size;
+            if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
+                if (size.ws_row != LINES || size.ws_col != COLS)
+                    resizeterm(size.ws_row, size.ws_col);
+                max_y = size.ws_row;
+                max_x = size.ws_col;
+            } else {
+                getmaxyx(stdscr, max_y, max_x);
+            }
+
+            SelectorLayout next;
+            if (!compute_selector_layout(max_y, max_x, count, max_item_w,
+                                         filterable, &next)) {
+                show_status_msg("Terminal too small");
+                break;
+            }
+            lo = next;
+            wresize(win, lo.h, lo.w);
+            mvwin(win, lo.y, lo.x);
+            werase(win);
+            resize_pending = false;
+            continue;
         }
         if (ch == 27) {
             if (filterable && filter_len > 0) {
@@ -355,13 +386,13 @@ static int run_list_selector(const char *title, const char *const *items,
             if (pos >= 0 && pos < match_count - 1) current = matched[pos + 1];
         } else if (ch == KEY_PPAGE) {
             if (pos >= 0) {
-                int next = pos - vis_rows;
+                int next = pos - lo.vis_rows;
                 if (next < 0) next = 0;
                 current = matched[next];
             }
         } else if (ch == KEY_NPAGE) {
             if (pos >= 0) {
-                int next = pos + vis_rows;
+                int next = pos + lo.vis_rows;
                 if (next >= match_count) next = match_count - 1;
                 current = matched[next];
             }
@@ -383,6 +414,7 @@ static int run_list_selector(const char *title, const char *const *items,
     del_panel(panel);
     delwin(win);
     curs_set(0);
+    resize_pending = true;
     return result;
 }
 

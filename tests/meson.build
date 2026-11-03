@@ -65,3 +65,12 @@ test_layout = executable('test_layout',
 )
 
 test('layout computation', test_layout)
+
+test_ncurses = executable('test_ncurses',
+  ['test_ncurses.c', '../src/layout_compute.c', '../src/selector_layout.c'],
+  dependencies: [cmocka_dep, ncursesw, panelw],
+  include_directories: inc,
+  c_args: test_c_args,
+)
+
+test('ncurses layout responsiveness', test_ncurses)
