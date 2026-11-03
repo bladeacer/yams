@@ -275,6 +275,14 @@ static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w,
 
   if (avcodec_parameters_to_context(dec_ctx, stream->codecpar) < 0)
     goto cleanup;
+
+  /* Decode a single still frame. Keep libavcodec single-threaded: the extra
+   * worker threads add no value here and their teardown is needless surface
+   * area when yams is already running chafa/glib worker threads. */
+  dec_ctx->pkt_timebase = stream->time_base;
+  dec_ctx->thread_count = 1;
+  dec_ctx->thread_type = 0;
+
   if (avcodec_open2(dec_ctx, decoder, NULL) < 0)
     goto cleanup;
 
@@ -313,6 +321,12 @@ static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w,
   }
 
   ret = avcodec_receive_frame(dec_ctx, frame);
+  if (ret == AVERROR(EAGAIN)) {
+    /* Some video streams need one more packet (or an explicit flush) before
+     * they produce their first frame. */
+    if (avcodec_send_packet(dec_ctx, NULL) >= 0)
+      ret = avcodec_receive_frame(dec_ctx, frame);
+  }
   if (ret < 0) {
     DBG("  avcodec_receive_frame FAILED (ret=%d)", ret);
     goto cleanup;
@@ -321,6 +335,12 @@ static int extract_frame(const char *url, uint8_t **out_pixels, int *out_w,
   int w = frame->width;
   int h = frame->height;
   DBG("  decoded frame: %dx%d, format=%d", w, h, frame->format);
+
+  /* Reject nonsensical dimensions before they reach sws/malloc arithmetic. */
+  if (w <= 0 || h <= 0 || w > 16384 || h > 16384) {
+    DBG("  refusing invalid frame dimensions %dx%d", w, h);
+    goto cleanup;
+  }
 
   enum AVPixelFormat src_fmt = frame->format;
   if (src_fmt == AV_PIX_FMT_YUVJ420P) {
