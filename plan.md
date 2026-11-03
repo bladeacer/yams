@@ -3,6 +3,23 @@
 Audit date: 2026-10-25. Roughly 4,200 LOC C (ncursesw, chafa, ffmpeg, playerctl), meson/Make/Nix build, cmocka tests.
 Priorities: P0 = bugs first, P1 = health, testing, config, P2 = larger features.
 
+## Follow-up (2026-11-03)
+
+- [x] **Art-mode switch abort** — `extract_frame` hardened: single-threaded decode, packet
+  timebase, flush on `EAGAIN`, dimension validation. ASAN and Valgrind runs over H264,
+  VP9, and attached-art MP3 media are clean.
+- [x] **Synced lyrics** — LRC timestamps are parsed and the position is interpolated between
+  metadata updates; the active line is highlighted and auto-scrolled into view.
+- [x] **Stale/partial metadata** — `r` restarts the metadata stream and forces a lyric
+  reparse; track identity now includes the file path; data-art markers split across reads
+  are carried into the next read instead of dropping the whole metadata block.
+- [x] **Instant pause/play** — status flips optimistically before playerctl confirms, and
+  control commands use `posix_spawnp` instead of `fork`/`exec`.
+- [x] **Responsive selector** — geometry moved to `compute_selector_layout`; the selector
+  resizes in place on `KEY_RESIZE`; art geometry is clamped to the real terminal.
+- [x] **Deterministic layout tests** — real `newterm`/`newwin`/panel instances across
+  4x10 through 60x240, plus stream data-art regression tests.
+
 ## P0: Bug fixes and correctness
 
 - [x] **1. Corrupt art cache poisoning**
@@ -46,6 +63,7 @@ dialog yields NULL passed to `wbkgd`/`box` and crashes. Overlays also have no re
 reaction while open.
 Fix: clamp dialog size to current `getmaxyx`, NULL-check `newwin`, and bail or redraw
 on failure. Also verify the art selector (src/ui.c:151-336, w=44) has the same clamping.
+Update: the art/player selector now uses `compute_selector_layout` and resizes in place.
 
 - [x] **6. Unchecked fork/dup2/library returns**
 Context:
@@ -159,11 +177,9 @@ no-handler with waitpid loop, log exit status once for the metadata child.
 Currently covered: parse_block (test_metadata, 450 lines), url_decode and setters (test_utils),
 config clamps (test_config), trim/bbox (test_art), cache info/clear (test_art_cache),
 compute_layout (test_layout).
+Added since the audit: stream/data-art parsing (`tests/test_stream.c`) and real-ncurses
+layout/selector geometry (`tests/test_ncurses.c`).
 Zero coverage today:
-- Stream/buffer parser in main.c: `process_metadata_stream` (src/main.c:84-125),
-  `strip_data_art` (68-82), the `[[END]]` resync and overflow trimming in
-  `handle_player_data` (478-501). This is the most bug-prone code and it becomes testable
-  once item 10 extracts it.
 - Art manager retry/debounce state machine (`update_and_render_art` state transitions,
   retry delays 1000/2000/5000/10000/30000 at src/art_manager.c:25, fallback text paths).
 - Backend: arg construction in `mpris_spawn_stream` (needs a small injection point for
@@ -246,9 +262,10 @@ from one source is fine at this size).
 - Sixel art too small at high resolution: `render_pixel_to_gs` (src/art.c:294-331) uses fixed
   cell geometry (10, 20) at src/art.c:298; query real cell pixels (CSI 16 t or tmux passthrough)
   and scale geometry accordingly.
-- New lyrics require prev+next to load: LYRICS is keyed on `song_changed`
+- [x] New lyrics require prev+next to load: LYRICS is keyed on `song_changed`
   (src/metadata.c:90), so lyric-only updates do not reset `lyric_count`; reparse LYRICS on
-  any value change instead of only after title change.
+  any value change instead of only after title change. Fixed: lyrics reparse on text change
+  and on manual refresh; `r` also restarts the metadata stream.
 - Last-active player not auto-updating after switching back to Auto: switching to "Auto"
   clears the player name (src/ui.c:460-462) but there is no follow-mode reset beyond
   `maintain_subprocesses` restarts; investigate playerctl `--player` follow semantics.
@@ -258,7 +275,8 @@ from one source is fine at this size).
   `playerctl volume N` and add keys (maybe `[`/`]`), requires no external changes.
 - Lyrics scroll keys: lyric pane renders from line 0 (src/panes.c:54-59), no scrolling for
   long lyrics; add scroll offset with j/k conflict resolution (only when lyrics pane focused,
-  or use PGUP/PGDOWN).
+  or use PGUP/PGDOWN). Partial: the active synced line now auto-scrolls; manual scroll is
+  still open.
 - Add `SPDX-License-Identifier: MIT OR Apache-2.0` headers across sources to match the dual
   license (currently only at repo level).
 - Confirm `default` keypress behavior: any printable key opens help (src/main.c:330-334),
@@ -277,3 +295,5 @@ vtable so it is a drop-in for parse_chunk/spawn_stream. Big win: no subprocess l
 no truncated-list read, no framing bug class, faster metadata latency.
 Cost: highest item by far; also removes playerctl as a runtime dependency (README/docs
 dep table change). Only start after P0/P1 land, behind its own decision point.
+Partial: control commands now use `posix_spawnp` and no longer fork; the metadata backend
+and framing remain on playerctl.
