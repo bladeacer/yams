@@ -4,11 +4,14 @@
 #include "subprocess.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char **environ;
 
 static pid_t ctrl_pid = -1;
 
@@ -37,35 +40,36 @@ static void reap_ctrl(void) {
 static void run_cmd(const char *action, const char *param) {
   reap_ctrl();
 
-  pid_t pid = fork();
-  if (pid == -1) {
-    DBG("run_cmd: fork failed: %s", strerror(errno));
-    return;
+  const char *player = get_player_name();
+  char *args[6];
+  int i = 0;
+  args[i++] = "playerctl";
+  if (player[0]) {
+    args[i++] = "--player";
+    args[i++] = (char *)player;
   }
+  args[i++] = (char *)action;
+  if (param)
+    args[i++] = (char *)param;
+  args[i] = NULL;
 
-  if (pid == 0) {
-    int devnull = open("/dev/null", O_WRONLY);
-    if (devnull == -1)
-      _exit(1);
-    if (dup2(devnull, STDOUT_FILENO) == -1 ||
-        dup2(devnull, STDERR_FILENO) == -1)
-      _exit(1);
-    close(devnull);
+  /* posix_spawn avoids the fork()/atfork overhead of a threaded process
+   * (chafa/glib run worker threads here) and returns as soon as the child is
+   * launched, so the keypress never waits for playerctl itself. */
+  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null",
+                                   O_WRONLY, 0);
+  posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null",
+                                   O_WRONLY, 0);
 
-    const char *player = get_player_name();
-    char *args[6];
-    int i = 0;
-    args[i++] = "playerctl";
-    if (player[0]) {
-      args[i++] = "--player";
-      args[i++] = (char *)player;
-    }
-    args[i++] = (char *)action;
-    if (param)
-      args[i++] = (char *)param;
-    args[i] = NULL;
-    execvp("playerctl", args);
-    _exit(1);
+  pid_t pid = -1;
+  int rc = posix_spawnp(&pid, "playerctl", &actions, NULL, args, environ);
+  posix_spawn_file_actions_destroy(&actions);
+
+  if (rc != 0) {
+    DBG("run_cmd: posix_spawnp failed: %s", strerror(rc));
+    return;
   }
 
   ctrl_pid = pid;
