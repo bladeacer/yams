@@ -7,6 +7,24 @@
 #define END_MARKER "[[END]]"
 #define END_MARKER_LEN 7
 
+size_t stream_partial_art_marker(const char *buf, size_t len) {
+  if (!buf || len == 0)
+    return 0;
+
+  /* A complete marker is processed normally by stream_strip_data_art(). */
+  if (len >= ART_MARKER_LEN &&
+      memcmp(buf + len - ART_MARKER_LEN, ART_MARKER, ART_MARKER_LEN) == 0)
+    return 0;
+
+  size_t max = len < ART_MARKER_LEN - 1 ? len : ART_MARKER_LEN - 1;
+  for (size_t k = max; k > 0; k--) {
+    const char *tail = buf + len - k;
+    if (tail[0] == '\t' && memcmp(tail, ART_MARKER, k) == 0)
+      return k;
+  }
+  return 0;
+}
+
 void stream_strip_data_art(char *buf, size_t *len, bool *skip) {
   if (!buf || !len)
     return;

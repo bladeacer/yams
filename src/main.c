@@ -24,8 +24,13 @@
 #include <unistd.h>
 
 #define BUFFER_SIZE 131072
+#define CHUNK_SIZE 16384
+#define ART_MARKER_CARRY 32
 static char poll_buffer[BUFFER_SIZE];
 static size_t buf_idx = 0;
+static bool art_skip = false;
+static char art_carry[ART_MARKER_CARRY];
+static size_t art_carry_len = 0;
 
 FILE *log_file = NULL;
 int player_fd = -1;
@@ -117,6 +122,8 @@ static void stop_metadata_stream(void) {
   }
   buf_idx = 0;
   poll_buffer[0] = '\0';
+  art_skip = false;
+  art_carry_len = 0;
 }
 
 static void start_metadata_stream(void) {
@@ -641,10 +648,10 @@ void show_help_overlay(long now) {
 }
 
 static void handle_player_data() {
-  char chunk[16384];
+  char chunk[CHUNK_SIZE];
+  char work[CHUNK_SIZE + ART_MARKER_CARRY];
   ssize_t n;
   bool data_read = false;
-  static bool art_skip = false;
 
   while ((n = read(player_fd, chunk, sizeof(chunk))) > 0) {
     // backends that own their own stream format handle
@@ -656,10 +663,31 @@ static void handle_player_data() {
       continue;
     }
 
-    size_t len = (size_t)n;
-    stream_strip_data_art(chunk, &len, &art_skip);
+    size_t len = 0;
+    if (art_carry_len > 0) {
+      memcpy(work, art_carry, art_carry_len);
+      len = art_carry_len;
+      art_carry_len = 0;
+    }
+    memcpy(work + len, chunk, (size_t)n);
+    len += (size_t)n;
+
+    /* Do not process a data-art marker that straddles this read boundary:
+     * carry the partial marker into the next read so the enormous URI can be
+     * stripped instead of overflowing poll_buffer and losing the whole song
+     * metadata block. */
+    if (!art_skip) {
+      size_t hold = stream_partial_art_marker(work, len);
+      if (hold > 0 && hold <= sizeof(art_carry)) {
+        memcpy(art_carry, work + len - hold, hold);
+        art_carry_len = hold;
+        len -= hold;
+      }
+    }
+
+    stream_strip_data_art(work, &len, &art_skip);
     buf_idx = stream_buffer_append(poll_buffer, sizeof(poll_buffer), buf_idx,
-                                   chunk, len);
+                                   work, len);
     data_read = true;
   }
 
@@ -673,7 +701,6 @@ static void handle_player_data() {
 
   if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
     stop_metadata_stream();
-    art_skip = false;
     clear_metadata();
     resize_pending = true;
   }

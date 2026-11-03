@@ -27,6 +27,15 @@ test('metadata parsing', test_metadata)
 test('utility functions', test_utils)
 test('config functions', test_config)
 
+test_stream = executable('test_stream',
+  ['test_stream.c', '../src/stream.c'],
+  dependencies: [cmocka_dep],
+  include_directories: inc,
+  c_args: test_c_args,
+)
+
+test('stream data-art handling', test_stream)
+
 test_art = executable('test_art',
   ['test_art.c', '../lib/trim.c'],
   dependencies: test_deps,
