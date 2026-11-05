@@ -773,6 +773,12 @@ int main() {
     long now = get_ms();
     long elapsed_since_change = now - get_last_metadata_change_time();
 
+    /* The position and synced lyrics are interpolated from wall time. Redraw
+     * once a second while playing so they keep moving even when the player
+     * emits no new metadata (e.g. after a seek). */
+    if (strcmp(m.status, "Playing") == 0 && now - last_draw_time >= 1000)
+      resize_pending = true;
+
     if (elapsed_since_change >= get_art_debounce() && !debounce_triggered) {
       resize_pending = true;
       debounce_triggered = true;
