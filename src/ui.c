@@ -113,12 +113,13 @@ static void render_new_art(const MetadataSnap *snap) {
     if (!song_changed && !is_retry_pending())
         return;
 
-    const char *art_src = (strlen(snap->art_url) > 5) ? snap->art_url : snap->file_path;
+    const char *art_src = art_source_for_current_track();
     char title_sig[2048];
     snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(snap->title),
              safe_str(snap->artist));
 
-    update_and_render_art(art_src, title_sig, geo.art_w, geo.art_h, false);
+    update_and_render_art(art_src ? art_src : "", title_sig, geo.art_w,
+                          geo.art_h, false);
 
     replay_art_buffer();
 

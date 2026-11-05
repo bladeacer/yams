@@ -7,6 +7,11 @@
 char *render_art_to_buffer(int x, int y, int w, int h,
                             ChafaSymbolTags tags, ChafaPixelMode pixel_mode, int is_ascii);
 
+/* Best artwork source for the current track, or NULL when there is none.
+ * A local media path is used for embedded art; a remote track URL (a stream
+ * page) is not artwork and must not be downloaded. */
+const char *art_source_for_current_track(void);
+
 /* Terminal capability guard.
  *
  * art_mode_ready() reports whether the active terminal can actually display

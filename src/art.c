@@ -740,22 +740,50 @@ char *clear_art_cache(void) {
 
 void art_cache_bump(void) { cache_version++; }
 
-static char *resolve_cached_input(const char *input_url) {
+const char *art_source_for_current_track(void) {
+  if (strlen(m.art_url) > 5 && strncmp(m.art_url, "data:", 5) != 0)
+    return m.art_url;
+
+  /* A local file can carry attached art. A remote file_path is the track's
+   * stream page, not an image, so fetching it only wastes time and retries. */
+  if (strlen(m.file_path) > 5 && !is_remote_url(m.file_path))
+    return m.file_path;
+
+  return NULL;
+}
+
+/* Resolve an artwork source to a local path, downloading remote URLs into the
+ * cache. *is_cache_path reports whether the returned path lives in the cache
+ * (so callers can discard it if it does not decode); *was_hit reports whether
+ * it was already there before this call. */
+static char *resolve_cached_input(const char *input_url, bool *is_cache_path,
+                                  bool *was_hit) {
   char *resolved = NULL;
+  if (is_cache_path) *is_cache_path = false;
+  if (was_hit) *was_hit = false;
 
   if (is_remote_url(input_url)) {
     char *cache_path = get_cached_path(input_url);
     if (cache_path) {
-      if (access(cache_path, F_OK) == 0) {
+      struct stat st;
+      if (stat(cache_path, &st) == 0 && st.st_size > 0) {
         DBG("  remote url, cache HIT: %s", cache_path);
         resolved = cache_path;
-      } else if (download_to_cache(input_url, cache_path)) {
-        DBG("  remote url, downloaded to cache: %s", cache_path);
-        resolved = cache_path;
+        if (was_hit) *was_hit = true;
       } else {
-        free(cache_path);
-        DBG("  remote url, download failed, using raw url");
+        /* Drop zero-length leftovers so they cannot pin an empty entry. */
+        if (stat(cache_path, &st) == 0)
+          unlink(cache_path);
+        if (download_to_cache(input_url, cache_path)) {
+          DBG("  remote url, downloaded to cache: %s", cache_path);
+          resolved = cache_path;
+        } else {
+          free(cache_path);
+          DBG("  remote url, download failed, using raw url");
+        }
       }
+      if (resolved && is_cache_path)
+        *is_cache_path = true;
     }
   }
 
@@ -764,11 +792,8 @@ static char *resolve_cached_input(const char *input_url) {
   return resolved;
 }
 
-static uint8_t *load_image(const char *input_url, int *out_w, int *out_h) {
-  char *resolved = resolve_cached_input(input_url);
-  if (!resolved)
-    return NULL;
-
+static uint8_t *decode_resolved_art(const char *resolved, int *out_w,
+                                    int *out_h) {
   char decoded[4096];
   const char *av_path = resolved;
   if (strncmp(resolved, "file://", 7) == 0) {
@@ -783,11 +808,44 @@ static uint8_t *load_image(const char *input_url, int *out_w, int *out_h) {
   int img_w = 0, img_h = 0;
   if (extract_frame(av_path, &pixels, &img_w, &img_h) != 0) {
     DBG("  extract_frame FAILED for [%s]", av_path);
-    free(resolved);
     return NULL;
   }
   DBG("  extract_frame SUCCESS: %dx%d pixels for [%s]", img_w, img_h, av_path);
-  free(resolved);
+  *out_w = img_w;
+  *out_h = img_h;
+  return pixels;
+}
+
+static uint8_t *load_image(const char *input_url, int *out_w, int *out_h) {
+  uint8_t *pixels = NULL;
+  int img_w = 0, img_h = 0;
+  bool is_cache_path = false;
+  bool was_hit = false;
+
+  char *resolved = resolve_cached_input(input_url, &is_cache_path, &was_hit);
+  if (resolved) {
+    pixels = decode_resolved_art(resolved, &img_w, &img_h);
+
+    /* A cached body that does not decode (HTML error page, truncated legacy
+     * entry, stale placeholder) must not remain a permanent cache hit. Drop
+     * it and retry once from the network. */
+    if (!pixels && is_cache_path && was_hit) {
+      DBG("  cached art failed to decode, dropping [%s]", resolved);
+      unlink(resolved);
+      free(resolved);
+      resolved = resolve_cached_input(input_url, &is_cache_path, &was_hit);
+      if (resolved)
+        pixels = decode_resolved_art(resolved, &img_w, &img_h);
+    }
+
+    /* A fresh download that still does not decode is not worth keeping. */
+    if (!pixels && is_cache_path && resolved)
+      unlink(resolved);
+    free(resolved);
+  }
+
+  if (!pixels)
+    return NULL;
 
   composite_alpha_on_black(pixels, img_w, img_h);
 
@@ -854,22 +912,13 @@ char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
   DBG("render_art_to_buffer: art_url=[%s] (len=%zu), file_path=[%s] (len=%zu)",
       m.art_url, strlen(m.art_url), m.file_path, strlen(m.file_path));
 
-  char *input_url = (strlen(m.art_url) > 5) ? m.art_url : m.file_path;
+  const char *input_url = art_source_for_current_track();
   DBG("  input_url selected: [%s] (len=%zu)", input_url ? input_url : "(null)",
       input_url ? strlen(input_url) : 0);
 
-  if (!input_url || strlen(input_url) < 5) {
-    DBG("  input_url too short, returning NULL");
+  if (!input_url) {
+    DBG("  no usable art source, returning NULL");
     return NULL;
-  }
-  if (strncmp(input_url, "data:", 5) == 0) {
-    DBG("  data: prefix detected in input_url, falling back to file_path=[%s]",
-        m.file_path);
-    input_url = m.file_path;
-    if (!input_url || strlen(input_url) < 5) {
-      DBG("  file_path too short after data: fallback, returning NULL");
-      return NULL;
-    }
   }
 
   int img_w = 0, img_h = 0;

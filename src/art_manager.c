@@ -157,10 +157,8 @@ static void set_replay_offset_for(const ArtModeEntry *mode) {
 
 void update_and_render_art(const char* src, const char* sig, int w, int h, bool force) {
     DBG("update_and_render_art: src=[%s] sig=[%s] w=%d h=%d force=%d", src ? src : "(null)", sig ? sig : "(null)", w, h, force);
-    if (!src || strlen(src) < 2) {
-        DBG("  src too short, returning");
-        return;
-    }
+    if (!src)
+        src = "";
 
     long now = get_ms();
     bool path_changed = (strcmp(src, last_art_path) != 0) || (strcmp(sig, last_title_sig) != 0);
@@ -177,6 +175,11 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
         last_art_path[sizeof(last_art_path)-1] = '\0';
         strncpy(last_title_sig, sig, sizeof(last_title_sig)-1);
         last_title_sig[sizeof(last_title_sig)-1] = '\0';
+        /* A new source (including "no artwork") must not inherit the previous
+         * track's remote retry state. */
+        retry_src[0] = '\0';
+        retry_attempt = 0;
+        retry_at = 0;
         if (path_changed && is_remote_url(src)) {
             DBG("  setting retry for remote url: [%s]", src);
             strncpy(retry_src, src, sizeof(retry_src)-1);

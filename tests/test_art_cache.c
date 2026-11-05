@@ -10,6 +10,7 @@
 #include <cmocka.h>
 #include "art.h"
 #include "art_manager.h"
+#include "metadata.h"
 #include "utils.h"
 
 static char *make_temp_dir(void) {
@@ -191,6 +192,36 @@ static void test_debounce_starts_zero_on_expire(void **state) {
     assert_true(now - get_last_metadata_change_time() >= 0);
 }
 
+static void test_art_source_prefers_remote_art_url(void **state) {
+    (void)state;
+    memset(&m, 0, sizeof(m));
+    strcpy(m.art_url, "https://example.test/cover.jpg");
+    strcpy(m.file_path, "/music/song.flac");
+    assert_string_equal(art_source_for_current_track(), m.art_url);
+}
+
+static void test_art_source_uses_local_file_path(void **state) {
+    (void)state;
+    memset(&m, 0, sizeof(m));
+    strcpy(m.file_path, "/music/song.flac");
+    assert_string_equal(art_source_for_current_track(), m.file_path);
+}
+
+static void test_art_source_ignores_remote_track_page(void **state) {
+    (void)state;
+    memset(&m, 0, sizeof(m));
+    strcpy(m.file_path, "https://music.youtube.com/watch?v=abc");
+    assert_null(art_source_for_current_track());
+}
+
+static void test_art_source_ignores_data_uri(void **state) {
+    (void)state;
+    memset(&m, 0, sizeof(m));
+    strcpy(m.art_url, "data:image/png;base64,AAAA");
+    strcpy(m.file_path, "/music/song.flac");
+    assert_string_equal(art_source_for_current_track(), m.file_path);
+}
+
 int main(void) {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test_setup_teardown(test_cache_empty_on_init, setup, teardown),
@@ -201,6 +232,10 @@ int main(void) {
         cmocka_unit_test(test_expire_debounce_sets_time_to_zero),
         cmocka_unit_test(test_reset_art_sets_current_time),
         cmocka_unit_test(test_debounce_starts_zero_on_expire),
+        cmocka_unit_test(test_art_source_prefers_remote_art_url),
+        cmocka_unit_test(test_art_source_uses_local_file_path),
+        cmocka_unit_test(test_art_source_ignores_remote_track_page),
+        cmocka_unit_test(test_art_source_ignores_data_uri),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
