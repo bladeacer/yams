@@ -80,8 +80,12 @@ static void test_parse_block_art_url(void **state) {
     (void)state;
     clear_metadata();
     char input[] = "ART|https://i.scdn.co/image/abc123";
-    assert_false(parse_block(input));
+    assert_true(parse_block(input));
     assert_string_equal(m.art_url, "https://i.scdn.co/image/abc123");
+
+    /* Repeating the same art must not keep requesting redraws. */
+    char again[] = "ART|https://i.scdn.co/image/abc123";
+    assert_false(parse_block(again));
 }
 
 static void test_parse_block_art_url_skip_data(void **state) {
@@ -96,8 +100,27 @@ static void test_parse_block_art_url_at_sentinel(void **state) {
     (void)state;
     clear_metadata();
     char input[] = "PATH|/path/to/song.flac\tART|@";
-    assert_false(parse_block(input));
+    assert_true(parse_block(input));
     assert_string_equal(m.art_url, "/path/to/song.flac");
+}
+
+static void test_parse_block_art_url_at_sentinel_remote_path(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "PATH|https://example.test/watch?v=abc\tART|@";
+    assert_false(parse_block(input));
+    assert_int_equal(strlen(m.art_url), 0);
+}
+
+static void test_parse_block_art_url_at_sentinel_remote_path_clears_art(void **state) {
+    (void)state;
+    clear_metadata();
+    char first[] = "ART|https://i.scdn.co/image/abc123";
+    assert_true(parse_block(first));
+
+    char input[] = "PATH|https://example.test/watch?v=abc\tART|@";
+    assert_true(parse_block(input));
+    assert_int_equal(strlen(m.art_url), 0);
 }
 
 static void test_parse_block_art_url_at_sentinel_no_path(void **state) {
@@ -112,7 +135,7 @@ static void test_parse_block_art_url_data_with_path(void **state) {
     (void)state;
     clear_metadata();
     char input[] = "PATH|/path/to/song.flac\tART|data:image/png;base64,abc";
-    assert_false(parse_block(input));
+    assert_true(parse_block(input));
     assert_string_equal(m.art_url, "/path/to/song.flac");
 }
 
@@ -317,6 +340,53 @@ static void test_parse_block_position_not_path(void **state) {
     assert_int_equal(m.position_us, 2500000);
     assert_string_equal(m.file_path, "/music/song.flac");
     assert_true(metadata_position_us() >= 2500000);
+}
+
+static void test_apply_seek_advances_position(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "STATUS|Playing\tPOSITION|5000000\tLENGTH|60000000";
+    parse_block(input);
+
+    long long before = metadata_position_us();
+    metadata_apply_seek(5000000);
+    long long after = metadata_position_us();
+
+    /* Allow for the milliseconds that elapse during the calls. */
+    assert_true(after >= before + 4990000);
+}
+
+static void test_apply_seek_clamps_bounds(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "STATUS|Paused\tPOSITION|5000000\tLENGTH|10000000";
+    parse_block(input);
+
+    metadata_apply_seek(-20000000);
+    assert_int_equal(metadata_position_us(), 0);
+
+    metadata_apply_seek(20000000);
+    assert_int_equal(metadata_position_us(), 10000000);
+}
+
+static void test_apply_seek_ignores_stale_position_sample(void **state) {
+    (void)state;
+    clear_metadata();
+    char input[] = "STATUS|Playing\tPOSITION|5000000\tLENGTH|60000000";
+    parse_block(input);
+
+    metadata_apply_seek(5000000);
+    assert_int_equal(m.position_us, 10000000);
+
+    /* A block emitted before the seek must not pull the UI backwards. */
+    char stale[] = "POSITION|5000000";
+    parse_block(stale);
+    assert_int_equal(m.position_us, 10000000);
+
+    /* A confirming sample ends the guard and is accepted. */
+    char fresh[] = "POSITION|10000000";
+    parse_block(fresh);
+    assert_int_equal(m.position_us, 10000000);
 }
 
 static void test_optimistic_status_toggle(void **state) {
@@ -530,6 +600,8 @@ int main(void) {
         cmocka_unit_test(test_parse_block_art_url),
         cmocka_unit_test(test_parse_block_art_url_skip_data),
         cmocka_unit_test(test_parse_block_art_url_at_sentinel),
+        cmocka_unit_test(test_parse_block_art_url_at_sentinel_remote_path),
+        cmocka_unit_test(test_parse_block_art_url_at_sentinel_remote_path_clears_art),
         cmocka_unit_test(test_parse_block_art_url_at_sentinel_no_path),
         cmocka_unit_test(test_parse_block_art_url_data_with_path),
         cmocka_unit_test(test_parse_block_lyrics_on_new_song),
@@ -546,6 +618,9 @@ int main(void) {
         cmocka_unit_test(test_lyrics_refresh_without_title_change),
         cmocka_unit_test(test_lyrics_forced_refresh),
         cmocka_unit_test(test_parse_block_position_not_path),
+        cmocka_unit_test(test_apply_seek_advances_position),
+        cmocka_unit_test(test_apply_seek_clamps_bounds),
+        cmocka_unit_test(test_apply_seek_ignores_stale_position_sample),
         cmocka_unit_test(test_optimistic_status_toggle),
         cmocka_unit_test(test_format_timestamp),
         cmocka_unit_test(test_safe_str_null),

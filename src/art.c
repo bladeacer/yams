@@ -741,8 +741,13 @@ char *clear_art_cache(void) {
 void art_cache_bump(void) { cache_version++; }
 
 const char *art_source_for_current_track(void) {
-  if (strlen(m.art_url) > 5 && strncmp(m.art_url, "data:", 5) != 0)
+  if (strlen(m.art_url) > 5 && strncmp(m.art_url, "data:", 5) != 0) {
+    /* A remote file_path copied into art_url by the data-URI/@ sentinel is a
+     * track URL, not artwork. */
+    if (strcmp(m.art_url, m.file_path) == 0 && is_remote_url(m.file_path))
+      return NULL;
     return m.art_url;
+  }
 
   /* A local file can carry attached art. A remote file_path is the track's
    * stream page, not an image, so fetching it only wastes time and retries. */

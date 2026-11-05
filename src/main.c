@@ -390,11 +390,13 @@ static void handle_keypress(int ch, long now) {
     break;
   case 'j':
     snprintf(seek_cmd, sizeof(seek_cmd), "%d-", get_seek_interval());
+    metadata_apply_seek(-(long long)get_seek_interval() * 1000000LL);
     backend->seek(seek_cmd);
     resize_pending = true;
     break;
   case 'k':
     snprintf(seek_cmd, sizeof(seek_cmd), "%d+", get_seek_interval());
+    metadata_apply_seek((long long)get_seek_interval() * 1000000LL);
     backend->seek(seek_cmd);
     resize_pending = true;
     break;

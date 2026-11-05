@@ -22,6 +22,12 @@ static char pending_status[16];
 static long pending_status_until = 0;
 static bool pending_status_valid = false;
 
+/* After an optimistic seek, ignore position samples that were emitted before
+ * the player processed the seek. A close match is accepted and ends the guard. */
+static long long seek_target_us = 0;
+static long long seek_tolerance_us = 0;
+static long seek_guard_until = 0;
+
 static unsigned long long hash_text(const char *s) {
   unsigned long long h = 1469598103934665603ULL;
   if (!s) return h;
@@ -41,6 +47,9 @@ void clear_metadata() {
   pending_status[0] = '\0';
   pending_status_valid = false;
   pending_status_until = 0;
+  seek_target_us = 0;
+  seek_tolerance_us = 0;
+  seek_guard_until = 0;
 }
 
 void metadata_request_refresh(void) {
@@ -104,6 +113,24 @@ long long metadata_position_us(void) {
   if (m.length_us > 0 && pos > m.length_us)
     pos = m.length_us;
   return pos;
+}
+
+void metadata_apply_seek(long long delta_us) {
+  long long pos = metadata_position_us() + delta_us;
+  if (pos < 0)
+    pos = 0;
+  if (m.length_us > 0 && pos > m.length_us)
+    pos = m.length_us;
+
+  m.position_us = pos;
+  m.position_received_ms = get_ms();
+
+  long long magnitude = delta_us < 0 ? -delta_us : delta_us;
+  seek_target_us = pos;
+  seek_tolerance_us = magnitude / 2;
+  if (seek_tolerance_us < 500000LL)
+    seek_tolerance_us = 500000LL;
+  seek_guard_until = get_ms() + 1500;
 }
 
 int metadata_lyric_index_at(long long position_us) {
@@ -268,6 +295,7 @@ bool parse_block(char *block) {
   bool song_changed = false;
   bool status_changed = false;
   bool lyrics_changed = false;
+  bool art_changed = false;
   char *saveptr_outer;
 
   char *token = strtok_r(block, "\t", &saveptr_outer);
@@ -297,21 +325,37 @@ bool parse_block(char *block) {
           if (key[1] == 'R' && key[2] == 'T' && key[3] == '\0') { // ART
             DBG("  ART field: val=[%s] (len=%zu), file_path=[%s]", val, strlen(val), m.file_path);
             if (val[0] == '@' && val[1] == '\0') {
-              if (strlen(m.file_path) > 5) {
+              if (strlen(m.file_path) > 5 && !is_remote_url(m.file_path)) {
+                if (strcmp(m.art_url, m.file_path) != 0)
+                  art_changed = true;
                 strncpy(m.art_url, m.file_path, sizeof(m.art_url) - 1); m.art_url[sizeof(m.art_url) - 1] = '\0';
                 DBG("  ART -> @ sentinel, copied file_path to art_url: [%s]", m.art_url);
               } else {
-                DBG("  ART -> @ sentinel but file_path too short, art_url unchanged");
+                /* Drop art from the previous track instead of showing it for
+                 * a remote track that has no usable artwork. */
+                if (m.art_url[0]) {
+                  m.art_url[0] = '\0';
+                  art_changed = true;
+                }
+                DBG("  ART -> @ sentinel but file_path is missing or remote, art_url cleared");
               }
             } else if (val[0] != 'd' || val[1] != 'a') {
+              if (strcmp(m.art_url, val) != 0)
+                art_changed = true;
               strncpy(m.art_url, val, sizeof(m.art_url) - 1); m.art_url[sizeof(m.art_url) - 1] = '\0';
               DBG("  ART -> direct url: [%s]", m.art_url);
             } else if (strncmp(val, "data:image/", 11) == 0) {
-              if (strlen(m.file_path) > 5) {
+              if (strlen(m.file_path) > 5 && !is_remote_url(m.file_path)) {
+                if (strcmp(m.art_url, m.file_path) != 0)
+                  art_changed = true;
                 strncpy(m.art_url, m.file_path, sizeof(m.art_url) - 1); m.art_url[sizeof(m.art_url) - 1] = '\0';
                 DBG("  ART -> data:image, copied file_path to art_url: [%s]", m.art_url);
               } else {
-                DBG("  ART -> data:image but file_path too short, art_url unchanged");
+                if (m.art_url[0]) {
+                  m.art_url[0] = '\0';
+                  art_changed = true;
+                }
+                DBG("  ART -> data:image but file_path is missing or remote, art_url cleared");
               }
             }
           } else if (key[2] == 'T') { // ARTIST
@@ -370,9 +414,19 @@ bool parse_block(char *block) {
           if (strcmp(key, "POSITION") == 0) {
             /* Unsupported position templates expand to an empty string. */
             if (val[0]) {
-              m.position_us = atoll(val);
-              if (m.position_us < 0) m.position_us = 0;
-              m.position_received_ms = get_ms();
+              long long new_pos = atoll(val);
+              if (new_pos < 0) new_pos = 0;
+
+              /* A block emitted before the player handled an optimistic seek
+               * would otherwise snap the UI back to the old position. */
+              bool stale =
+                  seek_guard_until > 0 && get_ms() < seek_guard_until &&
+                  llabs(new_pos - seek_target_us) > seek_tolerance_us;
+              if (!stale) {
+                m.position_us = new_pos;
+                m.position_received_ms = get_ms();
+                seek_guard_until = 0;
+              }
             }
           } else if (key[1] == 'L') { // PLAYER
             strncpy(m.player, val, sizeof(m.player) - 1); m.player[sizeof(m.player) - 1] = '\0';
@@ -399,5 +453,5 @@ bool parse_block(char *block) {
 
   DBG("  parse_block done: art_url=[%s] file_path=[%s] title=[%s] artist=[%s] status=[%s]",
       m.art_url, m.file_path, m.title, m.artist, m.status);
-  return (song_changed || status_changed || lyrics_changed);
+  return (song_changed || status_changed || lyrics_changed || art_changed);
 }

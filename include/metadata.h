@@ -64,6 +64,10 @@ long long metadata_position_us(void);
 int metadata_lyric_index(void);
 int metadata_lyric_index_at(long long position_us);
 
+/* Shift the interpolated position immediately after a seek so the UI shows
+ * the new spot before the player emits its next position sample. */
+void metadata_apply_seek(long long delta_us);
+
 /* Flip Playing/Paused locally for an immediate UI response. Incoming stale
  * status updates are ignored briefly until the player confirms the change. */
 void metadata_optimistic_toggle_status(void);
