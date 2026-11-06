@@ -20,6 +20,19 @@ long get_last_metadata_change_time();
 
 // These remain in ui.c
 void draw_dashboard();
+
+/* Lightweight redraw for the interpolated position, the active lyric line and
+ * the cache label. It never replays album art, so the one-second clock tick
+ * cannot make the image flicker. */
+void draw_clock_update(void);
+
+/* Monotonic deadline at which the transient status message should be cleared,
+ * or 0 when no status message is active. */
+long get_status_expiry_at(void);
+
+/* True when a track/art change is waiting for the debounce window. */
+bool art_update_pending(void);
+
 void show_art_mode_selector();
 void show_player_selector(void);
 void show_status_msg(const char *msg);

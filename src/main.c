@@ -38,9 +38,9 @@ long last_resize_time = 0;
 static pid_t metadata_pid = -1;
 static bool help_active = false;
 static long last_player_fail_ms = 0;
-long last_draw_time = 0;
 static const char *meta_fmt = NULL;
 static long last_metadata_ms = 0;
+static bool clock_update_requested = false;
 static PlayerBackend *backend = NULL;
 
 static bool process_metadata_stream(void);
@@ -362,7 +362,8 @@ void show_seek_input() {
       set_seek_interval(val);
   }
 
-  reset_art();
+  /* Changing the seek interval does not change the track or its artwork, so
+   * leave the current image alone and just repaint the help text. */
   resize_pending = true;
 }
 
@@ -455,13 +456,11 @@ static void handle_keypress(int ch, long now) {
   case KEY_LEFT:
     backend->prev();
     resize_pending = true;
-    last_draw_time = 0;
     break;
   case 'l':
   case KEY_RIGHT:
     backend->next();
     resize_pending = true;
-    last_draw_time = 0;
     break;
   case 'r':
     DBG("Manual refresh requested");
@@ -695,6 +694,9 @@ static void handle_player_data() {
 
   if (data_read) {
     last_metadata_ms = get_ms();
+    /* A seek or lyric update may only change the position, which is not a
+     * "changed" metadata block. Refresh the cheap clock view anyway. */
+    clock_update_requested = true;
     if (!backend || !backend->parse_chunk) {
       if (process_metadata_stream())
         resize_pending = true;
@@ -709,8 +711,15 @@ static void handle_player_data() {
 }
 
 static void maintain_subprocesses(long now) {
+  /* has_player() spawns playerctl, so it must not run merely because the
+   * metadata stream is quiet (a paused player can be silent for minutes).
+   * SIGCHLD already tells us when playerctl exits; this is a slow safety net
+   * for a wedged stream. */
+  static long last_player_check_ms = 0;
   if (player_fd != -1 && metadata_pid > 0 && last_metadata_ms > 0 &&
-      (now - last_metadata_ms) > 2000) {
+      (now - last_metadata_ms) > 5000 &&
+      (last_player_check_ms == 0 || now - last_player_check_ms > 5000)) {
+    last_player_check_ms = now;
     if (backend && !backend->has_player()) {
       DBG("no playerctl players found, forcing cleanup");
       stop_metadata_stream();
@@ -774,19 +783,34 @@ int main() {
 
     long now = get_ms();
     long elapsed_since_change = now - get_last_metadata_change_time();
+    bool playing = (strcmp(m.status, "Playing") == 0);
 
-    /* The position and synced lyrics are interpolated from wall time. Redraw
-     * once a second while playing so they keep moving even when the player
-     * emits no new metadata (e.g. after a seek). */
-    if (strcmp(m.status, "Playing") == 0 && now - last_draw_time >= 1000)
-      resize_pending = true;
-
-    if (elapsed_since_change >= get_art_debounce() && !debounce_triggered) {
+    if (elapsed_since_change >= get_art_debounce() && !debounce_triggered &&
+        art_update_pending()) {
       resize_pending = true;
       debounce_triggered = true;
     }
     if (elapsed_since_change < 50)
       debounce_triggered = false;
+
+    /* Wake exactly when the displayed second changes instead of repainting the
+     * whole dashboard on a one-second poll. */
+    long clock_deadline = 0;
+    if (playing) {
+      long long into_second = metadata_position_us() % 1000000LL;
+      long long remainder_us = 1000000LL - into_second;
+      if (remainder_us < 20000)
+        remainder_us = 20000; /* avoid a tick storm on boundary jitter */
+      clock_deadline = now + (long)((remainder_us + 999) / 1000);
+    }
+
+    long retry_at = is_retry_pending() ? get_art_retry_at() : 0;
+    if (retry_at > 0 && now >= retry_at)
+      resize_pending = true;
+
+    long status_expiry = get_status_expiry_at();
+    if (status_expiry > 0 && now >= status_expiry)
+      clock_update_requested = true;
 
     fd_set fds;
     FD_ZERO(&fds);
@@ -801,20 +825,54 @@ int main() {
 
     maintain_subprocesses(now);
 
-    struct timeval tv;
-
+    long wait_ms = -1;
     if (resize_pending) {
-      tv.tv_sec = 0;
-      tv.tv_usec = 10000;
-    } else if (elapsed_since_change < get_art_debounce()) {
-      tv.tv_sec = 0;
-      tv.tv_usec = 50000;
+      wait_ms = 10;
     } else {
-      tv.tv_sec = 1;
-      tv.tv_usec = 0;
+      if (clock_update_requested)
+        wait_ms = 0;
+
+      if (art_update_pending() &&
+          elapsed_since_change < get_art_debounce())
+        wait_ms = get_art_debounce() - elapsed_since_change;
+
+      if (clock_deadline > 0) {
+        long w = clock_deadline - now;
+        if (w < 1) w = 1;
+        if (wait_ms < 0 || w < wait_ms) wait_ms = w;
+      }
+
+      if (retry_at > 0) {
+        long w = retry_at - now;
+        if (w < 1) w = 1;
+        if (wait_ms < 0 || w < wait_ms) wait_ms = w;
+      }
+
+      if (status_expiry > 0) {
+        long w = status_expiry - now;
+        if (w < 0) w = 0;
+        if (wait_ms < 0 || w < wait_ms) wait_ms = w;
+      }
+
+      if (player_fd == -1) {
+        long w = last_player_fail_ms + 2000 - now;
+        if (w < 0) w = 0;
+        if (wait_ms < 0 || w < wait_ms) wait_ms = w;
+      } else if (metadata_pid > 0 && (wait_ms < 0 || wait_ms > 5000)) {
+        /* Slow safety net for maintain_subprocesses(). */
+        wait_ms = 5000;
+      }
     }
 
-    int activity = select(max_fd + 1, &fds, NULL, NULL, &tv);
+    struct timeval tv;
+    struct timeval *tvp = NULL;
+    if (wait_ms >= 0) {
+      tv.tv_sec = wait_ms / 1000;
+      tv.tv_usec = (wait_ms % 1000) * 1000;
+      tvp = &tv;
+    }
+
+    int activity = select(max_fd + 1, &fds, NULL, NULL, tvp);
 
     if (activity < 0) {
       if (errno == EINTR)
@@ -823,6 +881,9 @@ int main() {
       usleep(100000);
       continue;
     }
+
+    long after = get_ms();
+    bool clock_due = (clock_deadline > 0 && after >= clock_deadline);
 
     if (activity > 0 && FD_ISSET(STDIN_FILENO, &fds)) {
       int ch;
@@ -846,11 +907,12 @@ int main() {
       }
 
       draw_dashboard();
-      last_draw_time = now;
       resize_pending = false;
+      clock_update_requested = false;
+    } else if (clock_due || clock_update_requested) {
+      draw_clock_update();
+      clock_update_requested = false;
     }
-
-    usleep(10000);
   }
 
   handle_exit((int)exit_signal);

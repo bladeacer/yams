@@ -1,12 +1,42 @@
 #include "panes.h"
 #include "render_utils.h"
 #include "metadata.h"
+#include <stdio.h>
 #include <string.h>
+
+/* Position is always shown so remote streams that report no duration still
+ * expose the timestamp, including after the user seeks in the player. */
+static void draw_position_line(WINDOW *win, int *y, const MetadataSnap *snap) {
+    char position[96];
+    if (snap->length_us > 0)
+        snprintf(position, sizeof(position), "%s / %s",
+                 snap->position_str, snap->length_str);
+    else
+        snprintf(position, sizeof(position), "%s", snap->position_str);
+    draw_metadata_line(win, y, "Position: ", position, 2, false);
+}
+
+void render_metadata_position(WINDOW *win, const MetadataSnap *snap) {
+    if (!win || !snap) return;
+
+    int h, w;
+    getmaxyx(win, h, w);
+    /* Player, Duration and Position occupy the first three rows. */
+    if (h < 3) return;
+
+    mvwhline(win, 2, 0, ' ', w);
+    int y = 2;
+    draw_position_line(win, &y, snap);
+    wnoutrefresh(win);
+}
 
 void render_metadata_pane(WINDOW *win) {
     if (!win) return;
-    redrawwin(win);
     werase(win);
+    /* This is a derived window: without marking the lines for a physical
+     * redraw, later full-dashboard draws (for example after a seek) update the
+     * window buffer but ncurses leaves the old text on screen. */
+    redrawwin(win);
 
     MetadataSnap snap;
     snapshot_metadata(&snap);
@@ -17,12 +47,7 @@ void render_metadata_pane(WINDOW *win) {
 
     draw_metadata_line(win, &cur_y, "Player:   ", player_info, 1, true);
     draw_metadata_line(win, &cur_y, "Duration: ", snap.length_str, 1, true);
-    if (snap.length_us > 0) {
-        char position[96];
-        snprintf(position, sizeof(position), "%s / %s",
-                 snap.position_str, snap.length_str);
-        draw_metadata_line(win, &cur_y, "Position: ", position, 2, false);
-    }
+    draw_position_line(win, &cur_y, &snap);
     draw_metadata_line(win, &cur_y, "Title:    ", safe_str(snap.title), 1, true);
 
     draw_metadata_line(win, &cur_y, "Artist:   ", safe_str(snap.artist), 2, false);
@@ -41,7 +66,6 @@ void render_metadata_pane(WINDOW *win) {
 
 void render_lyrics_pane(WINDOW *win) {
     if (!win) return;
-    redrawwin(win);
     werase(win);
 
     int h, w;

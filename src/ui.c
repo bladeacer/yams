@@ -29,10 +29,20 @@ volatile sig_atomic_t resize_pending = false;
 static char status_msg[256] = {0};
 static long status_msg_time = 0;
 
+/* State of the cheap clock refresh. A full dashboard draw updates these so the
+ * next tick does not repaint identical text. */
+static int clock_second = -1;
+static int clock_lyric = -2;
+static int clock_cache_version = -1;
+
 void show_status_msg(const char *msg) {
     strncpy(status_msg, msg, sizeof(status_msg) - 1);
     status_msg[sizeof(status_msg) - 1] = '\0';
     status_msg_time = get_ms();
+}
+
+long get_status_expiry_at(void) {
+    return status_msg[0] ? status_msg_time + 3000 : 0;
 }
 
 typedef struct {
@@ -45,6 +55,10 @@ typedef struct {
 } DashboardState;
 
 static DashboardState dashboard;
+
+bool art_update_pending(void) {
+    return dashboard.art_update_requested;
+}
 
 static void draw_status_line(void) {
     long now = get_ms();
@@ -113,23 +127,92 @@ static void update_identity(const MetadataSnap *snap) {
 static void render_new_art(const MetadataSnap *snap) {
     long now = get_ms();
     long elapsed = now - get_last_metadata_change_time();
-    bool song_changed = (dashboard.art_update_requested && elapsed >= get_art_debounce());
+
+    const char *art_src = art_source_for_current_track();
+    /* Cached artwork is already on disk, so waiting out the debounce only
+     * delays the image when the user returns to a track they played before. */
+    bool cached = art_source_is_cached(art_src);
+    bool song_changed =
+        (dashboard.art_update_requested && (elapsed >= get_art_debounce() || cached));
 
     if (!song_changed && !is_retry_pending())
         return;
 
-    const char *art_src = art_source_for_current_track();
     char title_sig[2048];
     snprintf(title_sig, sizeof(title_sig), "%s%s", safe_str(snap->title),
              safe_str(snap->artist));
 
+    int cache_before = art_cache_version();
     update_and_render_art(art_src ? art_src : "", title_sig, geo.art_w,
                           geo.art_h, false);
 
     replay_art_buffer();
 
+    int cache_after = art_cache_version();
+    if (cache_after != cache_before || cache_after != clock_cache_version) {
+        /* The cache size label is part of the metadata pane. Refresh it as
+         * soon as a download lands instead of waiting for the next clock tick. */
+        if (meta_sub)
+            render_metadata_pane(meta_sub);
+        update_panels();
+        doupdate();
+        clock_cache_version = art_cache_version();
+    }
+
     dashboard.art_update_requested = false;
     resize_pending = false;
+}
+
+void draw_clock_update(void) {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    /* A resize is a full redraw, not a clock tick. */
+    if (max_x != geo.max_x || max_y != geo.max_y) {
+        resize_pending = true;
+        return;
+    }
+
+    MetadataSnap snap;
+    snapshot_metadata(&snap);
+
+    bool player_active = (snap.status[0] != '\0' && snap.status[0] != 'S');
+    if (!player_active)
+        return;
+
+    int second = (int)(snap.position_us / 1000000LL);
+    int lyric = metadata_lyric_index();
+    int cache_version = art_cache_version();
+
+    bool second_changed = (second != clock_second);
+    bool lyric_changed = (lyric != clock_lyric);
+    bool cache_changed = (cache_version != clock_cache_version);
+    bool status_visible = status_msg[0] != '\0';
+
+    if (!second_changed && !lyric_changed && !cache_changed && !status_visible)
+        return;
+
+    if (cache_changed) {
+        /* The cache counter lives in the metadata pane's help line. */
+        if (meta_sub)
+            render_metadata_pane(meta_sub);
+    } else if (second_changed) {
+        if (meta_sub)
+            render_metadata_position(meta_sub, &snap);
+    }
+
+    if (lyric_changed) {
+        if (lyr_sub)
+            render_lyrics_pane(lyr_sub);
+    }
+
+    draw_status_line();
+    update_panels();
+    doupdate();
+
+    clock_second = second;
+    clock_lyric = lyric;
+    clock_cache_version = cache_version;
 }
 
 void draw_dashboard() {
@@ -175,6 +258,10 @@ void draw_dashboard() {
 
     if (player_active)
         render_new_art(&snap);
+
+    clock_second = (int)(snap.position_us / 1000000LL);
+    clock_lyric = metadata_lyric_index();
+    clock_cache_version = art_cache_version();
 
     dashboard.was_active = player_active;
 }
