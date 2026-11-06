@@ -30,6 +30,12 @@ static char retry_src[4096] = {0};
 static int retry_attempt = 0;
 static long retry_at = 0;
 
+/* Separate budget for "the image rendered, but it is only a thumbnail"
+ * refreshes. Failures and low-resolution retries share retry_src/retry_at so
+ * the main loop only has one timer to watch. */
+static int low_res_attempt = 0;
+#define ART_LOW_RES_MAX_RETRIES 5
+
 static const int retry_delays[] = {1000, 2000, 5000, 10000, 30000};
 
 bool art_refresh_requested = false;
@@ -40,6 +46,10 @@ long get_last_metadata_change_time(void) {
 
 bool is_retry_pending(void) {
     return retry_src[0] != '\0';
+}
+
+long get_art_retry_at(void) {
+    return retry_src[0] != '\0' ? retry_at : 0;
 }
 
 void expire_art_debounce(void) {
@@ -66,6 +76,7 @@ void reset_art() {
     retry_src[0] = '\0';
     retry_attempt = 0;
     retry_at = 0;
+    low_res_attempt = 0;
     art_refresh_requested = true;
 }
 
@@ -180,6 +191,7 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
         retry_src[0] = '\0';
         retry_attempt = 0;
         retry_at = 0;
+        low_res_attempt = 0;
         if (path_changed && is_remote_url(src)) {
             DBG("  setting retry for remote url: [%s]", src);
             strncpy(retry_src, src, sizeof(retry_src)-1);
@@ -199,10 +211,17 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
         return;
     }
 
+    /* The caller (render_new_art) already waits out the metadata debounce
+     * before asking for a non-cached image. Re-checking it here meant the very
+     * first render was always skipped, because reset_art() records the current
+     * time immediately before the dashboard draws. An empty buffer is proof
+     * that nothing has been rendered yet, so it must not be debounced. */
     bool timer_expired = (now - last_metadata_change_time >= get_art_debounce());
-    DBG("  timer_expired=%d (elapsed=%ld, debounce=%d)", timer_expired, now - last_metadata_change_time, get_art_debounce());
+    bool first_render = (art_buffer == NULL);
+    DBG("  timer_expired=%d elapsed=%ld debounce=%d first=%d", timer_expired,
+        now - last_metadata_change_time, get_art_debounce(), first_render);
 
-    if (force || timer_expired || should_retry) {
+    if (force || timer_expired || should_retry || first_render) {
         DBG("  rendering new art");
         free(art_buffer);
         art_buffer = NULL;
@@ -213,9 +232,9 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
         char *new_buf = NULL;
 
         if (art_mode_ready(mode->pixel_mode)) {
-            new_buf = render_art_to_buffer(art_origin_x, art_origin_y, w, h,
-                                           mode->tags, mode->pixel_mode,
-                                           mode->is_ascii);
+            new_buf = render_art_to_buffer_ex(art_origin_x, art_origin_y, w, h,
+                                              mode->tags, mode->pixel_mode,
+                                              mode->is_ascii, should_retry);
             rendered = (new_buf != NULL);
         } else {
             char msg[192];
@@ -236,6 +255,23 @@ void update_and_render_art(const char* src, const char* sig, int w, int h, bool 
             }
             retry_src[0] = '\0';
             retry_attempt = 0;
+
+            /* A successfully rendered thumbnail is still worth refreshing: the
+             * player may publish a larger art URL moments later, or the CDN
+             * may serve a higher resolution copy on a fresh request. Keep the
+             * small image on screen while retrying at the normal backoff. */
+            if (rendered && is_remote_url(src) && art_last_image_is_low_res() &&
+                low_res_attempt < ART_LOW_RES_MAX_RETRIES) {
+                int idx = low_res_attempt < 5 ? low_res_attempt : 4;
+                strncpy(retry_src, src, sizeof(retry_src) - 1);
+                retry_src[sizeof(retry_src) - 1] = '\0';
+                retry_at = now + retry_delays[idx];
+                low_res_attempt++;
+                DBG("  low-resolution art, scheduled refresh at %ld (attempt %d)",
+                    retry_at, low_res_attempt);
+            } else if (rendered) {
+                low_res_attempt = 0;
+            }
         } else {
             DBG("  render_art_to_buffer FAILED (returned NULL)");
             bool had_retry = (retry_src[0] != '\0');

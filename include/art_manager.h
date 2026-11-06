@@ -12,5 +12,6 @@ void reset_art(void);
 void expire_art_debounce(void);
 long get_last_metadata_change_time(void);
 bool is_retry_pending(void);
+long get_art_retry_at(void);
 
 #endif

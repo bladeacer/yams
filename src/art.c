@@ -564,20 +564,42 @@ static unsigned long hash_str(const char *str) {
   return hash;
 }
 
+/* Cache keys deliberately ignore the query string and fragment. Artwork CDNs
+ * hand out signed/temporary query parameters that rotate between metadata
+ * updates; hashing them would make every refresh miss the cache and fill the
+ * directory with duplicate copies of the same image. */
+static char *cache_key_url(const char *url) {
+  size_t len = strcspn(url, "?#");
+  char *key = malloc(len + 1);
+  if (!key)
+    return NULL;
+  memcpy(key, url, len);
+  key[len] = '\0';
+  return key;
+}
+
 static char *get_cached_path(const char *url) {
   char *cache_dir = get_cache_dir();
   if (!cache_dir)
     return NULL;
   ensure_dir(cache_dir);
+  char *key = cache_key_url(url);
+  if (!key) {
+    free(cache_dir);
+    return NULL;
+  }
   char *path = NULL;
-  int ret = xasprintf(&path, "%s/%lx", cache_dir, hash_str(url));
+  int ret = xasprintf(&path, "%s/%lx", cache_dir, hash_str(key));
+  free(key);
   free(cache_dir);
   return ret >= 0 ? path : NULL;
 }
 
 static int cache_version = 0;
 
-static bool download_to_cache(const char *url, const char *cache_path) {
+int art_cache_version(void) { return cache_version; }
+
+static bool download_to_path(const char *url, const char *dest_path) {
   AVIOContext *io = NULL;
   if (avio_open(&io, url, AVIO_FLAG_READ) < 0)
     return false;
@@ -585,7 +607,7 @@ static bool download_to_cache(const char *url, const char *cache_path) {
   /* Write to a sibling temp file and only rename after a clean EOF, so a
    * partial or failed download never becomes a permanent cache hit. */
   char *tmp_path = NULL;
-  if (xasprintf(&tmp_path, "%s.part.%ld", cache_path, (long)getpid()) < 0) {
+  if (xasprintf(&tmp_path, "%s.part.%ld", dest_path, (long)getpid()) < 0) {
     avio_close(io);
     return false;
   }
@@ -630,13 +652,19 @@ static bool download_to_cache(const char *url, const char *cache_path) {
     return false;
   }
 
-  if (rename(tmp_path, cache_path) != 0) {
+  if (rename(tmp_path, dest_path) != 0) {
     unlink(tmp_path);
     free(tmp_path);
     return false;
   }
 
   free(tmp_path);
+  return true;
+}
+
+static bool download_to_cache(const char *url, const char *cache_path) {
+  if (!download_to_path(url, cache_path))
+    return false;
   cache_version++;
   return true;
 }
@@ -670,11 +698,14 @@ char *get_cache_info(void) {
     while ((entry = readdir(d)) != NULL) {
       if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
         continue;
+      /* In-flight downloads and comparison copies are not cache entries. */
+      if (strstr(entry->d_name, ".part.") || strstr(entry->d_name, ".refresh."))
+        continue;
       char *path = NULL;
       if (xasprintf(&path, "%s/%s", cache_dir, entry->d_name) < 0)
         continue;
       struct stat st;
-      if (stat(path, &st) == 0) {
+      if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
         total += (double)st.st_size;
         count++;
       }
@@ -757,44 +788,52 @@ const char *art_source_for_current_track(void) {
   return NULL;
 }
 
-/* Resolve an artwork source to a local path, downloading remote URLs into the
- * cache. *is_cache_path reports whether the returned path lives in the cache
- * (so callers can discard it if it does not decode); *was_hit reports whether
- * it was already there before this call. */
-static char *resolve_cached_input(const char *input_url, bool *is_cache_path,
-                                  bool *was_hit) {
-  char *resolved = NULL;
-  if (is_cache_path) *is_cache_path = false;
-  if (was_hit) *was_hit = false;
+/* Any image narrower or shorter than this is treated as a thumbnail. */
+#define ART_LOW_RES_DIM 256
 
-  if (is_remote_url(input_url)) {
-    char *cache_path = get_cached_path(input_url);
-    if (cache_path) {
-      struct stat st;
-      if (stat(cache_path, &st) == 0 && st.st_size > 0) {
-        DBG("  remote url, cache HIT: %s", cache_path);
-        resolved = cache_path;
-        if (was_hit) *was_hit = true;
-      } else {
-        /* Drop zero-length leftovers so they cannot pin an empty entry. */
-        if (stat(cache_path, &st) == 0)
-          unlink(cache_path);
-        if (download_to_cache(input_url, cache_path)) {
-          DBG("  remote url, downloaded to cache: %s", cache_path);
-          resolved = cache_path;
-        } else {
-          free(cache_path);
-          DBG("  remote url, download failed, using raw url");
-        }
-      }
-      if (resolved && is_cache_path)
-        *is_cache_path = true;
-    }
-  }
+static int last_image_w = 0;
+static int last_image_h = 0;
 
-  if (!resolved)
-    resolved = strdup(input_url);
-  return resolved;
+void art_last_image_size(int *width, int *height) {
+  if (width)
+    *width = last_image_w;
+  if (height)
+    *height = last_image_h;
+}
+
+bool art_last_image_is_low_res(void) {
+  return last_image_w > 0 && last_image_h > 0 &&
+         last_image_w < ART_LOW_RES_DIM && last_image_h < ART_LOW_RES_DIM;
+}
+
+static bool is_file_url(const char *url) {
+  return url && strncmp(url, "file://", 7) == 0;
+}
+
+/* A track file can carry attached art, but copying the whole media file into
+ * the art cache is wasteful. Only cache an actual file:// artwork URL, not the
+ * file path that metadata uses as an embedded-art fallback. */
+static bool source_is_cacheable(const char *source) {
+  if (!source || !source[0])
+    return false;
+  if (is_remote_url(source))
+    return true;
+  return is_file_url(source) && strcmp(source, m.art_url) == 0 &&
+         strcmp(m.art_url, m.file_path) != 0;
+}
+
+bool art_source_is_cached(const char *source) {
+  if (!source_is_cacheable(source))
+    return false;
+
+  char *cache_path = get_cached_path(source);
+  if (!cache_path)
+    return false;
+
+  struct stat st;
+  bool cached = stat(cache_path, &st) == 0 && st.st_size > 0;
+  free(cache_path);
+  return cached;
 }
 
 static uint8_t *decode_resolved_art(const char *resolved, int *out_w,
@@ -821,36 +860,138 @@ static uint8_t *decode_resolved_art(const char *resolved, int *out_w,
   return pixels;
 }
 
-static uint8_t *load_image(const char *input_url, int *out_w, int *out_h) {
+/* Decode the cached copy and, when refresh_remote is set, try to replace it
+ * with a larger copy from the network. A candidate is only committed when it
+ * decodes and has a larger pixel area than the existing cache entry. */
+static uint8_t *load_cached_image(const char *input_url, bool refresh_remote,
+                                  int *out_w, int *out_h) {
   uint8_t *pixels = NULL;
   int img_w = 0, img_h = 0;
-  bool is_cache_path = false;
-  bool was_hit = false;
 
-  char *resolved = resolve_cached_input(input_url, &is_cache_path, &was_hit);
-  if (resolved) {
-    pixels = decode_resolved_art(resolved, &img_w, &img_h);
+  char *cache_path = get_cached_path(input_url);
+  if (!cache_path)
+    return NULL;
 
-    /* A cached body that does not decode (HTML error page, truncated legacy
-     * entry, stale placeholder) must not remain a permanent cache hit. Drop
-     * it and retry once from the network. */
-    if (!pixels && is_cache_path && was_hit) {
-      DBG("  cached art failed to decode, dropping [%s]", resolved);
-      unlink(resolved);
-      free(resolved);
-      resolved = resolve_cached_input(input_url, &is_cache_path, &was_hit);
-      if (resolved)
-        pixels = decode_resolved_art(resolved, &img_w, &img_h);
+  struct stat st;
+  bool have = stat(cache_path, &st) == 0 && st.st_size > 0;
+  if (!have && stat(cache_path, &st) == 0)
+    unlink(cache_path); /* drop zero-length leftovers */
+
+  /* Local artwork URLs are mostly stable, but a player may reuse the same
+   * path for a new image. Refresh when the source is newer than the copy. */
+  if (have && !is_remote_url(input_url) && is_file_url(input_url)) {
+    char decoded[4096];
+    url_decode(decoded, input_url + 7);
+    struct stat source_st;
+    if (stat(decoded, &source_st) == 0 &&
+        source_st.st_mtime > st.st_mtime)
+      refresh_remote = true;
+  }
+
+  if (have && refresh_remote) {
+    char *tmp_path = NULL;
+    bool downloaded = false;
+    if (xasprintf(&tmp_path, "%s.refresh.%ld", cache_path, (long)getpid()) >= 0)
+      downloaded = download_to_path(input_url, tmp_path);
+
+    if (downloaded && tmp_path) {
+      int cand_w = 0, cand_h = 0;
+      uint8_t *candidate = decode_resolved_art(tmp_path, &cand_w, &cand_h);
+      if (candidate) {
+        int old_w = 0, old_h = 0;
+        uint8_t *existing = decode_resolved_art(cache_path, &old_w, &old_h);
+        bool better =
+            !existing || ((long long)cand_w * cand_h > (long long)old_w * old_h);
+        if (better) {
+          if (rename(tmp_path, cache_path) == 0) {
+            cache_version++;
+            DBG("  refreshed art cache %dx%d -> %dx%d: %s", old_w, old_h,
+                cand_w, cand_h, cache_path);
+          } else {
+            DBG("  art refresh could not replace cache, using %dx%d in memory",
+                cand_w, cand_h);
+          }
+          pixels = candidate;
+          img_w = cand_w;
+          img_h = cand_h;
+          free(existing);
+        } else {
+          DBG("  refreshed art %dx%d is not larger than cached %dx%d", cand_w,
+              cand_h, old_w, old_h);
+          pixels = existing;
+          img_w = old_w;
+          img_h = old_h;
+          free(candidate);
+        }
+      }
     }
 
-    /* A fresh download that still does not decode is not worth keeping. */
-    if (!pixels && is_cache_path && resolved)
-      unlink(resolved);
-    free(resolved);
+    if (tmp_path) {
+      unlink(tmp_path);
+      free(tmp_path);
+    }
+
+    if (!pixels) {
+      DBG("  refresh failed, using cached art: %s", cache_path);
+      pixels = decode_resolved_art(cache_path, &img_w, &img_h);
+    }
+  } else if (have) {
+    DBG("  remote url, cache HIT: %s", cache_path);
+    pixels = decode_resolved_art(cache_path, &img_w, &img_h);
+    if (!pixels) {
+      /* A cached body that does not decode (HTML error page, truncated legacy
+       * entry, stale placeholder) must not remain a permanent cache hit. */
+      DBG("  cached art failed to decode, dropping [%s]", cache_path);
+      unlink(cache_path);
+    }
+  }
+
+  /* Self-heal bad or missing cache entries with one fresh download. */
+  if (!pixels) {
+    if (download_to_cache(input_url, cache_path)) {
+      DBG("  remote url, downloaded to cache: %s", cache_path);
+      pixels = decode_resolved_art(cache_path, &img_w, &img_h);
+    } else {
+      DBG("  remote url, download failed");
+    }
+    if (!pixels && stat(cache_path, &st) == 0)
+      unlink(cache_path); /* never pin an undecodable download */
+  }
+
+  free(cache_path);
+  if (!pixels)
+    return NULL;
+
+  *out_w = img_w;
+  *out_h = img_h;
+  return pixels;
+}
+
+static uint8_t *load_image(const char *input_url, bool refresh_remote,
+                           int *out_w, int *out_h) {
+  uint8_t *pixels = NULL;
+  int img_w = 0, img_h = 0;
+
+  last_image_w = 0;
+  last_image_h = 0;
+
+  if (source_is_cacheable(input_url)) {
+    pixels = load_cached_image(input_url, refresh_remote, &img_w, &img_h);
+  } else {
+    char *resolved = strdup(input_url);
+    if (resolved) {
+      pixels = decode_resolved_art(resolved, &img_w, &img_h);
+      free(resolved);
+    }
   }
 
   if (!pixels)
     return NULL;
+
+  /* Record the native resolution before cropping so a small thumbnail is
+   * still recognised even when its borders make it look bigger. */
+  last_image_w = img_w;
+  last_image_h = img_h;
 
   composite_alpha_on_black(pixels, img_w, img_h);
 
@@ -912,10 +1053,13 @@ static void render_image(uint8_t *pixels, int img_w, int img_h, int x, int y,
   render_pixel_to_gs(pixels, img_w, img_h, w, h, pixel_mode, out);
 }
 
-char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
-                           ChafaPixelMode pixel_mode, int is_ascii) {
-  DBG("render_art_to_buffer: art_url=[%s] (len=%zu), file_path=[%s] (len=%zu)",
-      m.art_url, strlen(m.art_url), m.file_path, strlen(m.file_path));
+char *render_art_to_buffer_ex(int x, int y, int w, int h,
+                              ChafaSymbolTags tags, ChafaPixelMode pixel_mode,
+                              int is_ascii, bool refresh_remote) {
+  DBG("render_art_to_buffer: art_url=[%s] (len=%zu), file_path=[%s] (len=%zu), "
+      "refresh_remote=%d",
+      m.art_url, strlen(m.art_url), m.file_path, strlen(m.file_path),
+      refresh_remote);
 
   const char *input_url = art_source_for_current_track();
   DBG("  input_url selected: [%s] (len=%zu)", input_url ? input_url : "(null)",
@@ -923,11 +1067,13 @@ char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
 
   if (!input_url) {
     DBG("  no usable art source, returning NULL");
+    last_image_w = 0;
+    last_image_h = 0;
     return NULL;
   }
 
   int img_w = 0, img_h = 0;
-  uint8_t *pixels = load_image(input_url, &img_w, &img_h);
+  uint8_t *pixels = load_image(input_url, refresh_remote, &img_w, &img_h);
   if (!pixels)
     return NULL;
 
@@ -937,4 +1083,10 @@ char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
 
   free(pixels);
   return g_string_free(out, FALSE);
+}
+
+char *render_art_to_buffer(int x, int y, int w, int h, ChafaSymbolTags tags,
+                           ChafaPixelMode pixel_mode, int is_ascii) {
+  return render_art_to_buffer_ex(x, y, w, h, tags, pixel_mode, is_ascii,
+                                 false);
 }
