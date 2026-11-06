@@ -369,6 +369,20 @@ static void test_apply_seek_clamps_bounds(void **state) {
     assert_int_equal(metadata_position_us(), 10000000);
 }
 
+static void test_apply_seek_remote_without_length(void **state) {
+    (void)state;
+    clear_metadata();
+    /* Remote streams commonly report no duration. A user seek must still move
+     * forward and must not be clamped to zero. */
+    char input[] =
+        "STATUS|Playing\tPOSITION|5000000\tPATH|https://example.test/live.m3u8";
+    parse_block(input);
+    assert_int_equal(m.length_us, 0);
+
+    metadata_apply_seek(30000000LL);
+    assert_true(metadata_position_us() >= 34900000LL);
+}
+
 static void test_apply_seek_ignores_stale_position_sample(void **state) {
     (void)state;
     clear_metadata();
@@ -620,6 +634,7 @@ int main(void) {
         cmocka_unit_test(test_parse_block_position_not_path),
         cmocka_unit_test(test_apply_seek_advances_position),
         cmocka_unit_test(test_apply_seek_clamps_bounds),
+        cmocka_unit_test(test_apply_seek_remote_without_length),
         cmocka_unit_test(test_apply_seek_ignores_stale_position_sample),
         cmocka_unit_test(test_optimistic_status_toggle),
         cmocka_unit_test(test_format_timestamp),

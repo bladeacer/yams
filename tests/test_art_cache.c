@@ -30,6 +30,29 @@ static void mkdir_p(char *dir) {
     mkdir(dir, 0755);
 }
 
+/* Mirrors the cache key hash in art.c so tests can place a file at the path a
+ * given URL resolves to without exporting cache internals. */
+static unsigned long test_cache_hash(const char *str) {
+    unsigned long hash = 5381;
+    int c;
+    while ((c = *str++))
+        hash = ((hash << 5) + hash) + (unsigned char)c;
+    return hash;
+}
+
+static char *expected_cache_path(const char *base, const char *url) {
+    size_t len = strcspn(url, "?#");
+    char *key = malloc(len + 1);
+    assert_non_null(key);
+    memcpy(key, url, len);
+    key[len] = '\0';
+    char *path = NULL;
+    int ret = asprintf(&path, "%s/yams/art/%lx", base, test_cache_hash(key));
+    free(key);
+    assert_true(ret > 0);
+    return path;
+}
+
 static int setup(void **state) {
     char *dir = make_temp_dir();
     if (!dir) return -1;
@@ -166,6 +189,42 @@ static void test_cache_version_returns_cached(void **state) {
     free(cache_dir);
 }
 
+static void test_cache_key_ignores_query_and_fragment(void **state) {
+    char *dir = (char *)*state;
+    char *cache_dir;
+    asprintf(&cache_dir, "%s/yams/art", dir);
+    mkdir_p(cache_dir);
+
+    char *path = expected_cache_path(dir, "https://cdn.test/cover.jpg");
+    FILE *f = fopen(path, "wb");
+    assert_non_null(f);
+    fputc('x', f);
+    fclose(f);
+
+    /* Rotating CDN query strings and fragments must resolve to the same file. */
+    assert_true(art_source_is_cached("https://cdn.test/cover.jpg"));
+    assert_true(art_source_is_cached("https://cdn.test/cover.jpg?token=abc"));
+    assert_true(art_source_is_cached("https://cdn.test/cover.jpg#preview"));
+    assert_false(art_source_is_cached("https://cdn.test/other.jpg?token=abc"));
+
+    free(path);
+    free(cache_dir);
+}
+
+static void test_cache_version_increments_on_bump(void **state) {
+    (void)state;
+    int before = art_cache_version();
+    art_cache_bump();
+    assert_int_equal(art_cache_version(), before + 1);
+}
+
+static void test_reset_art_clears_retry_state(void **state) {
+    (void)state;
+    reset_art();
+    assert_false(is_retry_pending());
+    assert_int_equal(get_art_retry_at(), 0);
+}
+
 static void test_expire_debounce_sets_time_to_zero(void **state) {
     (void)state;
     reset_art();
@@ -237,6 +296,9 @@ int main(void) {
         cmocka_unit_test_setup_teardown(test_cache_reports_correct_size, setup, teardown),
         cmocka_unit_test_setup_teardown(test_cache_clear_removes_files, setup, teardown),
         cmocka_unit_test_setup_teardown(test_cache_version_returns_cached, setup, teardown),
+        cmocka_unit_test_setup_teardown(test_cache_key_ignores_query_and_fragment, setup, teardown),
+        cmocka_unit_test(test_cache_version_increments_on_bump),
+        cmocka_unit_test(test_reset_art_clears_retry_state),
         cmocka_unit_test(test_expire_debounce_sets_time_to_zero),
         cmocka_unit_test(test_reset_art_sets_current_time),
         cmocka_unit_test(test_debounce_starts_zero_on_expire),
